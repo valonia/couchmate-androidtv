@@ -18,10 +18,21 @@ data class Item(
     val backdrop: String? = null,
     val categoryId: String? = null,
     val categoryName: String? = null,
+    // Från plugin-källor (t.ex. Twitch)
+    val subtitle: String? = null,
+    val live: Boolean = false,
+    val viewers: Int? = null,
 )
 
-data class SearchResult(val live: List<Item>, val vod: List<Item>, val series: List<Item>) {
-    val isEmpty get() = live.isEmpty() && vod.isEmpty() && series.isEmpty()
+/** En källa från ett plugin på servern (t.ex. Twitch) – visas i menyn mellan Favoriter och Historik. */
+data class Source(val id: String, val name: String, val iconPath: String?)
+
+data class SourceSection(val id: String, val title: String, val items: List<Item>)
+data class SourceBrowse(val message: String?, val sections: List<SourceSection>)
+data class SourceResult(val id: String, val name: String, val items: List<Item>)
+
+data class SearchResult(val live: List<Item>, val vod: List<Item>, val series: List<Item>, val sources: List<SourceResult> = emptyList()) {
+    val isEmpty get() = live.isEmpty() && vod.isEmpty() && series.isEmpty() && sources.all { it.items.isEmpty() }
 }
 
 data class HistoryEntry(
@@ -39,8 +50,9 @@ data class HistoryEntry(
     val lastAt: Long,
     val position: Double,
     val duration: Double?,
+    val live: Boolean = false,
 ) {
-    val isLive get() = type == "live"
+    val isLive get() = type == "live" || live
     val fraction get() = if (duration != null && duration > 0) (position / duration).toFloat().coerceIn(0f, 1f) else 0f
     val finished get() = duration != null && duration > 0 && position >= duration * 0.95
     /** Värt att fortsätta från: mer än 1 min in och inte nästan slut. */
@@ -82,9 +94,11 @@ data class Media(
     val categoryId: String?,
     val url: String,
     val seriesId: String? = null,
+    val live: Boolean = false,
 ) {
     val key get() = "$type:$id"
-    val isLive get() = type == "live"
+    /** TV-kanaler och liveströmmar från plugin-källor. */
+    val isLive get() = type == "live" || live
 }
 
 data class RoomState(

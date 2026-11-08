@@ -203,6 +203,10 @@ fun SearchScreen(sync: SyncClient, api: Api) {
                         }
                     }
                 }
+                // Träffar från plugin-källor (t.ex. Twitch-strömmar som sänder just nu)
+                r.sources.filter { it.items.isNotEmpty() }.forEach { src ->
+                    item(key = "src-${src.id}") { SourceRow(src.name, src.items, sync, playingId = null) }
+                }
                 if (r.series.isNotEmpty()) item {
                     ResultSection(t("Serier", "Series"), r.series.size) {
                         items(r.series) { sr ->

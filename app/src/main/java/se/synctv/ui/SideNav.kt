@@ -79,6 +79,7 @@ fun Section.icon(): ImageVector = when (this) {
     Section.FAVORITES -> Icons.Filled.Star
     Section.HISTORY -> AppIcons.History
     Section.SEARCH -> Icons.Filled.Search
+    Section.SOURCE -> AppIcons.LiveTv
 }
 
 private val COLLAPSED = 80.dp
@@ -92,6 +93,9 @@ private val EXPANDED = 250.dp
 fun SideNav(
     section: Section,
     onSelect: (Section) -> Unit,
+    sources: List<se.synctv.Source> = emptyList(),
+    selectedSource: String? = null,
+    onSelectSource: (se.synctv.Source) -> Unit = {},
     newEpisodes: Int,
     media: Media?,
     onOpenPlayer: () -> Unit,
@@ -131,6 +135,18 @@ fun SideNav(
         Spacer(Modifier.height(14.dp))
 
         listOf(Section.SEARCH, Section.LIVE, Section.MOVIES, Section.SERIES, Section.FAVORITES, Section.HISTORY).forEach { s ->
+            // Källor från plugins (t.ex. Twitch) ligger mellan Favoriter och Historik.
+            if (s == Section.HISTORY) sources.forEach { src ->
+                val sel = selectedSource == src.id
+                NavItem(
+                    icon = sourceIcon(src.iconPath),
+                    label = src.name,
+                    expanded = expanded,
+                    selected = sel,
+                    onClick = { onSelectSource(src) },
+                    modifier = if (sel) Modifier.focusRequester(selectedFocus) else Modifier,
+                )
+            }
             NavItem(
                 icon = s.icon(),
                 label = s.label,

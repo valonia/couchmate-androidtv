@@ -76,7 +76,8 @@ enum class Section(private val sv: String, private val en: String, val kind: Str
     SERIES("Serier", "Series", "series"),
     FAVORITES("Favoriter", "Favorites", ""),
     HISTORY("Historik", "History", ""),
-    SEARCH("Sök", "Search", ""); // visas som ikon i menyraden
+    SEARCH("Sök", "Search", ""), // visas som ikon i menyraden
+    SOURCE("", "", ""); // en källa från ett plugin (t.ex. Twitch) – namnet kommer från källan
 
     /** Läses vid varje ritning, så fliknamnen byter språk direkt. */
     val label: String get() = t(sv, en)
@@ -91,6 +92,19 @@ fun BrowseScreen(sync: SyncClient, api: Api, onOpenPlayer: () -> Unit, onSetting
     val favorites by sync.favorites.collectAsState()
     val newEpisodes = favorites.sumOf { it.newCount }
     var section by rememberSaveable { mutableStateOf(Section.LIVE) }
+    // Källor från plugins (t.ex. Twitch) – hämtas från servern och visas i menyn mellan Favoriter och Historik.
+    var sources by remember { mutableStateOf<List<se.synctv.Source>>(emptyList()) }
+    var sourceId by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            runCatching { api.sources() }.onSuccess { sources = it }
+            delay(60_000)
+        }
+    }
+    // Försvinner källan (pluginet avstängt) går vi tillbaka till TV.
+    LaunchedEffect(sources, sourceId) {
+        if (section == Section.SOURCE && sources.isNotEmpty() && sources.none { it.id == sourceId }) section = Section.LIVE
+    }
     val firstFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { delay(100); runCatching { firstFocus.requestFocus() } }
 
@@ -116,6 +130,9 @@ fun BrowseScreen(sync: SyncClient, api: Api, onOpenPlayer: () -> Unit, onSetting
         SideNav(
             section = section,
             onSelect = { section = it },
+            sources = sources,
+            selectedSource = if (section == Section.SOURCE) sourceId else null,
+            onSelectSource = { sourceId = it.id; section = Section.SOURCE },
             newEpisodes = newEpisodes,
             media = state?.media,
             onOpenPlayer = onOpenPlayer,
@@ -135,6 +152,12 @@ fun BrowseScreen(sync: SyncClient, api: Api, onOpenPlayer: () -> Unit, onSetting
                 Section.SEARCH -> SearchScreen(sync, api)
                 Section.FAVORITES -> FavoritesScreen(sync, api)
                 Section.HISTORY -> HistoryScreen(sync, api)
+                Section.SOURCE -> {
+                    val src = sources.firstOrNull { it.id == sourceId }
+                    if (src != null) androidx.compose.runtime.key(src.id) {
+                        SourceScreen(sync, api, src, playingId = state?.media?.takeIf { it.type == "plugin" }?.id)
+                    }
+                }
                 else -> androidx.compose.runtime.key(section) { VodBrowser(sync, api, section) }
             }
         }

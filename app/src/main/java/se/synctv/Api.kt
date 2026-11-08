@@ -82,6 +82,27 @@ class Api(private val base: String, private val pin: String) {
             backdrop = o.optStringOrNull("backdrop"),
             categoryId = o.optStringOrNull("categoryId"),
             categoryName = o.optStringOrNull("categoryName"),
+            subtitle = o.optStringOrNull("subtitle"),
+            live = o.optBoolean("live"),
+            viewers = if (o.isNull("viewers") || !o.has("viewers")) null else o.optInt("viewers"),
+        )
+    }
+
+    /** Källor från plugins på servern (t.ex. Twitch). */
+    suspend fun sources(): List<Source> {
+        val a = JSONArray(get("/api/sources"))
+        return List(a.length()) { i -> val o = a.getJSONObject(i); Source(o.getString("id"), o.optString("name"), o.optStringOrNull("iconPath")) }
+    }
+
+    suspend fun sourceBrowse(id: String): SourceBrowse {
+        val o = JSONObject(get("/api/sources/" + enc(id) + "/browse"))
+        val a = o.optJSONArray("sections") ?: JSONArray()
+        return SourceBrowse(
+            message = o.optStringOrNull("message"),
+            sections = List(a.length()) { i ->
+                val s = a.getJSONObject(i)
+                SourceSection(s.optString("id"), s.optString("title"), parseItems(s.optJSONArray("items") ?: JSONArray()))
+            },
         )
     }
 
@@ -105,6 +126,7 @@ class Api(private val base: String, private val pin: String) {
                 lastAt = o.optLong("lastAt"),
                 position = o.optDouble("position", 0.0),
                 duration = if (o.isNull("duration")) null else o.optDouble("duration"),
+                live = o.optBoolean("live"),
             )
         }
     }
@@ -116,6 +138,9 @@ class Api(private val base: String, private val pin: String) {
             live = parseItems(o.optJSONArray("live") ?: JSONArray()),
             vod = parseItems(o.optJSONArray("vod") ?: JSONArray()),
             series = parseItems(o.optJSONArray("series") ?: JSONArray()),
+            sources = (o.optJSONArray("sources") ?: JSONArray()).let { a ->
+                List(a.length()) { i -> val s = a.getJSONObject(i); SourceResult(s.optString("id"), s.optString("name"), parseItems(s.optJSONArray("items") ?: JSONArray())) }
+            },
         )
     }
 

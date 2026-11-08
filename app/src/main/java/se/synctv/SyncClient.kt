@@ -176,6 +176,7 @@ class SyncClient(
                 categoryId = j.optStringOrNull("categoryId"),
                 url = url,
                 seriesId = j.optStringOrNull("seriesId"),
+                live = j.optBoolean("live"),
             )
         }
         val upNext = o.optJSONObject("upNext")?.let { u ->
@@ -217,10 +218,11 @@ class SyncClient(
         type: String, id: String, ext: String, title: String, subtitle: String?, icon: String?, categoryId: String?,
         position: Double = 0.0,
         seriesId: String? = null,
+        live: Boolean = false,
     ) {
         val media = JSONObject()
             .put("type", type).put("id", id).put("ext", ext).put("title", title)
-            .put("subtitle", subtitle).put("icon", icon).put("categoryId", categoryId).put("seriesId", seriesId)
+            .put("subtitle", subtitle).put("icon", icon).put("categoryId", categoryId).put("seriesId", seriesId).put("live", live)
         send(JSONObject().put("type", "load").put("media", media).put("position", position))
     }
 
@@ -274,6 +276,9 @@ class SyncClient(
     fun reminderRemove(key: String) = send(JSONObject().put("type", "reminder_remove").put("key", key))
     fun reminderNow() = send(JSONObject().put("type", "reminder_now"))
     fun reminderCancel() = send(JSONObject().put("type", "reminder_cancel"))
+
+    /** Spela ett objekt från en plugin-källa (t.ex. en Twitch-ström) för alla. */
+    fun loadSource(item: Item) = load("plugin", item.id, "m3u8", item.name, item.subtitle, item.icon, null, live = item.live)
 
     fun nextNow() = send(JSONObject().put("type", "next_now"))
     fun nextCancel() = send(JSONObject().put("type", "next_cancel"))
