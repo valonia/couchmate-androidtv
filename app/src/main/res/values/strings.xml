@@ -1,0 +1,4 @@
+<resources>
+    <!-- Namnet under ikonen på hemskärmen (engelska/standard) -->
+    <string name="app_name">Couchmates</string>
+</resources>

@@ -1,0 +1,4 @@
+<resources>
+    <!-- Namnet under ikonen när TV:n är på svenska. Ändra här om ni vill ha ett eget svenskt namn. -->
+    <string name="app_name">Couchmates</string>
+</resources>
