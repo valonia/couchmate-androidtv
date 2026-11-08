@@ -32,6 +32,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -51,6 +53,9 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
     val favorites by sync.favorites.collectAsState()
     val reminders by sync.reminders.collectAsState()
     var series by remember { mutableStateOf<Item?>(null) }
+    var guideFor by remember { mutableStateOf<Favorite?>(null) }
+    BackHandler(enabled = guideFor != null) { guideFor = null }
+    var epgLoaded by remember { mutableStateOf(false) }
     // EPG (nu/nästa) för favoritkanalerna
     val liveIds = favorites.filter { it.type == "live" }.map { it.id }
     var epg by remember { mutableStateOf<Map<String, List<se.synctv.Program>>>(emptyMap()) }
@@ -58,6 +63,7 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
         if (liveIds.isEmpty()) return@LaunchedEffect
         while (true) {
             epg = runCatching { api.epgFor(liveIds) }.getOrDefault(epg)
+            epgLoaded = true
             delay(3 * 60_000)
         }
     }
@@ -79,6 +85,25 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
         return
     }
 
+    val g = guideFor
+    if (g != null) {
+        val first = remember { FocusRequester() }
+        LaunchedEffect(g.key) { delay(80); runCatching { first.requestFocus() } }
+        Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 12.dp, bottom = 12.dp)) {
+                Pill(t("‹  Tillbaka", "‹  Back"), selected = false, onClick = { guideFor = null }, modifier = Modifier.focusRequester(first))
+                Spacer(Modifier.width(8.dp))
+                Pill(t("Titta nu", "Watch now"), selected = true, onClick = {
+                    sync.load("live", g.id, g.ext.ifBlank { "ts" }, g.name, g.categoryName, g.icon, g.categoryId)
+                })
+                Spacer(Modifier.width(8.dp))
+                Pill(t("Ta bort från favoriter", "Remove from favourites"), selected = false, onClick = { sync.favRemove(g.key); guideFor = null })
+            }
+            ChannelGuide(g.toItem(), epg[g.id], now, api, sync, g.categoryName, Modifier.fillMaxSize())
+        }
+        return
+    }
+
     // Serier med nya avsnitt först
     val seriesFavs = favorites.filter { it.type == "series" }.sortedByDescending { it.newCount }
     val movieFavs = favorites.filter { it.type == "movie" }
@@ -88,7 +113,7 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 12.dp, bottom = 14.dp)) {
             Text(t("Favoriter", "Favourites"), fontSize = 24.sp, fontWeight = FontWeight.Bold)
             Text(
-                t("   Gemensamma för alla i rummet  ·  Håll inne OK för att ta bort", "   Shared with everyone in the room  ·  Hold OK to remove"),
+                t("   Gemensamma för alla i rummet  ·  Håll inne OK: ta bort (kanaler: tablå)", "   Shared with everyone in the room  ·  Hold OK: remove (channels: guide)"),
                 fontSize = 15.sp, color = Palette.Faint,
             )
         }
@@ -165,7 +190,7 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
                     items(liveFavs) { f ->
                         FocusRow(
                             onClick = { sync.load("live", f.id, f.ext.ifBlank { "ts" }, f.name, f.categoryName, f.icon, f.categoryId) },
-                            onLongClick = { sync.favRemove(f.key) },
+                            onLongClick = { guideFor = f },
                             modifier = Modifier.width(380.dp).background(Palette.Panel, RoundedCornerShape(8.dp)),
                             height = 96.dp,
                         ) {
@@ -178,6 +203,7 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
                                 val nxt = progs.next(now)
                                 if (progs == null) {
                                     f.categoryName?.let { Text(it, fontSize = 13.sp, color = Palette.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                                    if (epgLoaded) Text(t("Ingen programinformation", "No programme information"), fontSize = 12.sp, color = Palette.Faint, maxLines = 1)
                                 } else {
                                     Text(cur?.title ?: t("Ingen programinformation", "No programme information"), fontSize = 13.sp, color = Palette.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     if (cur != null) ProgressLine(cur.progress(now), Modifier.fillMaxWidth().padding(vertical = 4.dp))
