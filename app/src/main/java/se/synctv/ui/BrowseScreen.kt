@@ -247,7 +247,7 @@ private fun GroupList(
         LaunchedEffect(categories.size) {
             if (selIdx > 0 && listState.layoutInfo.visibleItemsInfo.none { it.index == selIdx && it.offset >= 0 }) listState.scrollToItem(selIdx)
         }
-        LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.focusEntry(entry) { intArrayOf(selIdx) }) {
+        LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.focusEntry(entry) { arrayOf<Any?>(selIdx) }) {
             itemsIndexed(categories) { i, c ->
                 FocusRow(onClick = { onSelect(c) }, selected = c.id == selectedId, height = 46.dp, modifier = entry.item(i)) {
                     Text(c.name, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -307,7 +307,7 @@ private fun LiveBrowser(sync: SyncClient, api: Api, playingId: String?) {
     // Från grupperna: tillbaka till kanalen man var på, annars den som spelas, annars översta.
     val chState = rememberLazyListState()
     val chEntry = rememberFocusEntry(chState)
-    LaunchedEffect(catId) { chEntry.last = -1; chState.scrollToItem(0) }
+    LaunchedEffect(catId) { chEntry.last = null; chState.scrollToItem(0) }
     Row(Modifier.fillMaxSize()) {
         GroupList(cats, catId, { catId = it.id }, Modifier.width(250.dp))
         Spacer(Modifier.width(14.dp))
@@ -322,7 +322,7 @@ private fun LiveBrowser(sync: SyncClient, api: Api, playingId: String?) {
                 loading && items.isEmpty() -> Message(t("Laddar kanaler…", "Loading channels…"))
                 else -> LazyColumn(
                     state = chState, verticalArrangement = Arrangement.spacedBy(2.dp),
-                    modifier = Modifier.focusEntry(chEntry) { intArrayOf(chEntry.last, items.indexOfFirst { it.id == playingId }) },
+                    modifier = Modifier.focusEntry(chEntry) { arrayOf<Any?>(chEntry.last, items.indexOfFirst { it.id == playingId }) },
                 ) {
                     itemsIndexed(items) { idx, item ->
                         ChannelRow(
@@ -384,7 +384,7 @@ private fun VodBrowser(sync: SyncClient, api: Api, section: Section) {
     // Från grupperna: tillbaka till filmen man var på, annars översta.
     val gridState = rememberLazyGridState()
     val gridEntry = rememberFocusEntry(gridState)
-    LaunchedEffect(catId) { gridEntry.last = -1; gridState.scrollToItem(0) }
+    LaunchedEffect(catId) { gridEntry.last = null; gridState.scrollToItem(0) }
 
     Row(Modifier.fillMaxSize()) {
         GroupList(cats, catId, { catId = it.id }, Modifier.width(250.dp))
@@ -410,7 +410,7 @@ private fun VodBrowser(sync: SyncClient, api: Api, section: Section) {
                         modifier = Modifier.padding(start = 6.dp, top = 10.dp))
                     LazyVerticalGrid(
                         state = gridState,
-                        modifier = Modifier.focusEntry(gridEntry) { intArrayOf(gridEntry.last) },
+                        modifier = Modifier.focusEntry(gridEntry) { arrayOf<Any?>(gridEntry.last) },
                         columns = GridCells.Adaptive(92.dp),
                         contentPadding = PaddingValues(start = 6.dp, end = 6.dp, top = 12.dp, bottom = 24.dp),
                         horizontalArrangement = Arrangement.spacedBy(18.dp),

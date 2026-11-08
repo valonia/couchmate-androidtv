@@ -2,6 +2,7 @@
 
 package se.synctv.ui
 
+import androidx.compose.foundation.lazy.rememberLazyListState
 import se.synctv.t
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -173,12 +174,17 @@ fun SearchScreen(sync: SyncClient, api: Api) {
 
         // ---- resultat
         val r = result
+        // Ner från sökrutan eller in från menyn: tillbaka till raden man var på, annars översta.
+        val listState = rememberLazyListState()
+        val entry = rememberFocusEntryByKey(listState)
         if (r != null && !r.isEmpty) {
             LazyColumn(
+                state = listState,
+                modifier = Modifier.focusEntry(entry),
                 contentPadding = PaddingValues(bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(22.dp),
             ) {
-                if (r.live.isNotEmpty()) item {
+                if (r.live.isNotEmpty()) item(key = "res-live") { Box(entry.item("res-live")) {
                     ResultSection(t("Kanaler", "Channels"), r.live.size) {
                         items(r.live) { ch ->
                             ChannelCard(
@@ -190,8 +196,8 @@ fun SearchScreen(sync: SyncClient, api: Api) {
                             }
                         }
                     }
-                }
-                if (r.vod.isNotEmpty()) item {
+                } }
+                if (r.vod.isNotEmpty()) item(key = "res-vod") { Box(entry.item("res-vod")) {
                     ResultSection(t("Filmer", "Movies"), r.vod.size) {
                         items(r.vod) { m ->
                             PosterCard(cleanTitle(m.name), api.abs(m.icon), onFocus = {}, modifier = Modifier.width(128.dp), onClick = {
@@ -202,12 +208,12 @@ fun SearchScreen(sync: SyncClient, api: Api) {
                             )
                         }
                     }
-                }
+                } }
                 // Träffar från plugin-källor (t.ex. Twitch-strömmar som sänder just nu)
                 r.sources.filter { it.items.isNotEmpty() }.forEach { src ->
-                    item(key = "src-${src.id}") { SourceRow(src.name, src.items, sync, playingId = null) }
+                    item(key = "src-${src.id}") { Box(entry.item("src-${src.id}")) { SourceRow(src.name, src.items, sync, playingId = null) } }
                 }
-                if (r.series.isNotEmpty()) item {
+                if (r.series.isNotEmpty()) item(key = "res-series") { Box(entry.item("res-series")) {
                     ResultSection(t("Serier", "Series"), r.series.size) {
                         items(r.series) { sr ->
                             PosterCard(cleanTitle(sr.name), api.abs(sr.icon), onFocus = {}, modifier = Modifier.width(128.dp), onClick = { series = sr },
@@ -217,7 +223,7 @@ fun SearchScreen(sync: SyncClient, api: Api) {
                             )
                         }
                     }
-                }
+                } }
             }
         }
     }

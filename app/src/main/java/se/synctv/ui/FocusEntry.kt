@@ -11,33 +11,44 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 
 /**
  * Bestämmer var fokus hamnar när man går in i en lista från sidan (t.ex. från menyn).
  * Utan detta väljer Compose raden som ligger närmast i höjd – ofta flera rader ner.
  * Ordning: önskat objekt om det syns, annars översta helt synliga raden.
+ * Objekten identifieras med index eller med listans nycklar (key), beroende på hur den skapades.
  */
-class FocusEntry(private val visible: () -> List<Int>) {
-    private val requesters = HashMap<Int, FocusRequester>()
+class FocusEntry(private val visible: () -> List<Any>) {
+    private val requesters = HashMap<Any, FocusRequester>()
 
     /** Senast fokuserade objekt i listan (för att komma tillbaka dit). */
-    var last: Int = -1
+    var last: Any? = null
 
-    fun requester(index: Int): FocusRequester = requesters.getOrPut(index) { FocusRequester() }
+    fun requester(id: Any): FocusRequester = requesters.getOrPut(id) { FocusRequester() }
 
-    /** Sätts på varje objekt i listan. */
-    fun item(index: Int): Modifier = Modifier.focusRequester(requester(index))
+    /** Sätts på varje objekt i listan (id = index eller nyckel). */
+    fun item(id: Any): Modifier = Modifier
+        .focusRequester(requester(id))
+        .onFocusChanged { if (it.hasFocus) last = id }
 
-    fun target(vararg wanted: Int): FocusRequester {
+    fun target(vararg wanted: Any?): FocusRequester {
         val vis = visible()
-        val pick = wanted.firstOrNull { it >= 0 && it in vis } ?: vis.firstOrNull() ?: return FocusRequester.Default
+        val pick = wanted.firstOrNull { it != null && it in vis } ?: vis.firstOrNull { it in requesters } ?: return FocusRequester.Default
         return requester(pick)
     }
 }
 
+/** Objekten identifieras med sitt index. */
 @Composable
 fun rememberFocusEntry(state: LazyListState): FocusEntry = remember(state) {
     FocusEntry { state.layoutInfo.visibleItemsInfo.filter { it.offset >= 0 }.map { it.index } }
+}
+
+/** Objekten identifieras med sin nyckel (key) – för listor med blandade rader. */
+@Composable
+fun rememberFocusEntryByKey(state: LazyListState): FocusEntry = remember(state) {
+    FocusEntry { state.layoutInfo.visibleItemsInfo.filter { it.offset >= 0 }.map { it.key } }
 }
 
 @Composable
@@ -46,5 +57,5 @@ fun rememberFocusEntry(state: LazyGridState): FocusEntry = remember(state) {
 }
 
 /** Sätts på listan: när fokus kommer utifrån går det till [wanted] (första som syns), annars översta raden. */
-fun Modifier.focusEntry(entry: FocusEntry, wanted: () -> IntArray): Modifier =
+fun Modifier.focusEntry(entry: FocusEntry, wanted: () -> Array<Any?> = { arrayOf(entry.last) }): Modifier =
     this.focusProperties { enter = { entry.target(*wanted()) } }.focusGroup()

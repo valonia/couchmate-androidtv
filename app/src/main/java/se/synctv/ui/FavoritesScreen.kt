@@ -2,6 +2,8 @@
 
 package se.synctv.ui
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.filled.Notifications
 import se.synctv.next
 import se.synctv.now
@@ -147,8 +149,11 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
             return@Column
         }
 
-        LazyColumn(contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-            if (reminders.isNotEmpty()) item {
+        // Från menyn: tillbaka till raden man var på, annars översta – inte raden i samma höjd.
+        val listState = rememberLazyListState()
+        val entry = rememberFocusEntryByKey(listState)
+        LazyColumn(state = listState, modifier = Modifier.focusEntry(entry), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+            if (reminders.isNotEmpty()) item(key = "fav-reminders") { Box(entry.item("fav-reminders")) {
                 FavSection(t("Påminnelser", "Reminders"), reminders.size) {
                     items(reminders) { r ->
                         FocusRow(
@@ -170,8 +175,8 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
                         }
                     }
                 }
-            }
-            if (seriesFavs.isNotEmpty()) item {
+            } }
+            if (seriesFavs.isNotEmpty()) item(key = "fav-series") { Box(entry.item("fav-series")) {
                 FavSection(t("Serier", "Series"), seriesFavs.size) {
                     items(seriesFavs) { f ->
                         PosterCard(
@@ -187,8 +192,8 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
                         )
                     }
                 }
-            }
-            if (movieFavs.isNotEmpty()) item {
+            } }
+            if (movieFavs.isNotEmpty()) item(key = "fav-movies") { Box(entry.item("fav-movies")) {
                 FavSection(t("Filmer", "Movies"), movieFavs.size) {
                     items(movieFavs) { f ->
                         PosterCard(
@@ -202,8 +207,8 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
                         )
                     }
                 }
-            }
-            if (liveFavs.isNotEmpty()) item {
+            } }
+            if (liveFavs.isNotEmpty()) item(key = "fav-live") { Box(entry.item("fav-live")) {
                 FavSection(t("Kanaler", "Channels"), liveFavs.size) {
                     items(liveFavs) { f ->
                         FocusRow(
@@ -238,7 +243,7 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
                         }
                     }
                 }
-            }
+            } }
         }
     }
 }

@@ -2,6 +2,7 @@
 
 package se.synctv.ui
 
+import androidx.compose.foundation.lazy.rememberLazyListState
 import se.synctv.t
 import se.synctv.I18n
 import androidx.compose.foundation.background
@@ -103,6 +104,9 @@ fun HistoryScreen(sync: SyncClient, api: Api) {
         }
 
         val list = entries
+        // Från menyn: tillbaka till raden man var på, annars översta – inte raden i samma höjd.
+        val listState = rememberLazyListState()
+        val entry = rememberFocusEntryByKey(listState)
         when {
             error != null && list == null -> Text(t("Fel: $error", "Error: $error"), color = Color(0xFFFF8A80), modifier = Modifier.padding(12.dp))
             list == null -> Text(t("Laddar…", "Loading…"), color = Palette.Dim, modifier = Modifier.padding(12.dp))
@@ -111,12 +115,14 @@ fun HistoryScreen(sync: SyncClient, api: Api) {
                 color = Palette.Dim, fontSize = 16.sp, modifier = Modifier.padding(12.dp),
             )
             else -> LazyColumn(
-                Modifier.background(Palette.Panel, RoundedCornerShape(12.dp)),
+                Modifier.background(Palette.Panel, RoundedCornerShape(12.dp)).focusEntry(entry),
+                state = listState,
                 contentPadding = PaddingValues(8.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 items(list, key = { it.key }) { e ->
                     HistoryRow(
+                        modifier = entry.item(e.key),
                         e = e,
                         playingNow = state?.media?.let { "${it.type}:${it.id}" } == e.key,
                         iconUrl = api.abs(e.icon),
@@ -135,6 +141,7 @@ fun HistoryScreen(sync: SyncClient, api: Api) {
 
 @Composable
 private fun HistoryRow(
+    modifier: Modifier,
     e: HistoryEntry,
     playingNow: Boolean,
     iconUrl: String?,
@@ -143,7 +150,7 @@ private fun HistoryRow(
     onRemove: () -> Unit,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        FocusRow(onClick = onPlay, modifier = Modifier.weight(1f), height = 92.dp, selected = playingNow) {
+        FocusRow(onClick = onPlay, modifier = Modifier.weight(1f).then(modifier), height = 92.dp, selected = playingNow) {
             if (e.isLive) {
                 Thumb(iconUrl, e.title, Modifier.width(110.dp).height(62.dp))
             } else {

@@ -2,6 +2,7 @@
 
 package se.synctv.ui
 
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -142,13 +143,16 @@ fun SourceScreen(sync: SyncClient, api: Api, source: Source, playingId: String?)
             Text(source.name, fontSize = 26.sp, fontWeight = FontWeight.Bold)
         }
         val d = data
+        // Från menyn: tillbaka till raden man var på, annars översta – inte raden i samma höjd.
+        val listState = rememberLazyListState()
+        val entry = rememberFocusEntryByKey(listState)
         when {
             d == null && error != null -> Text(t("Fel: $error", "Error: $error"), color = Color(0xFFFF8A80), fontSize = 16.sp, modifier = Modifier.padding(12.dp))
             d == null -> Text(t("Laddar…", "Loading…"), color = Palette.Dim, fontSize = 16.sp, modifier = Modifier.padding(12.dp))
             d.sections.all { it.items.isEmpty() } -> Text(d.message ?: t("Inget att visa just nu.", "Nothing to show right now."), color = Palette.Dim, fontSize = 16.sp, modifier = Modifier.padding(12.dp))
-            else -> LazyColumn(contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                d.message?.let { m -> item { Text(m, color = Palette.Dim, fontSize = 15.sp, modifier = Modifier.padding(horizontal = 12.dp)) } }
-                items(d.sections.filter { it.items.isNotEmpty() }, key = { it.id }) { s -> SourceRow(s.title, s.items, sync, playingId) }
+            else -> LazyColumn(state = listState, modifier = Modifier.focusEntry(entry), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                d.message?.let { m -> item(key = "msg") { Text(m, color = Palette.Dim, fontSize = 15.sp, modifier = Modifier.padding(horizontal = 12.dp)) } }
+                items(d.sections.filter { it.items.isNotEmpty() }, key = { it.id }) { s -> Box(entry.item(s.id)) { SourceRow(s.title, s.items, sync, playingId) } }
             }
         }
     }
