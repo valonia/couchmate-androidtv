@@ -49,6 +49,8 @@ class SyncClient(
     val error = MutableStateFlow<String?>(null)
     val favorites = MutableStateFlow<List<Favorite>>(emptyList())
     val reminders = MutableStateFlow<List<Reminder>>(emptyList())
+    /** Räknas upp när servern säger att plugins har ändrats (menyn hämtas då på nytt). */
+    val sourcesVersion = MutableStateFlow(0)
     /** Livechatt för strömmen som spelas (bara när den visas). */
     val chat = MutableStateFlow<List<ChatMsg>>(emptyList())
     @Volatile private var chatOn = false
@@ -149,6 +151,7 @@ class SyncClient(
                     )
                 }
             }
+            "sources_changed" -> sourcesVersion.value++
             "reminders" -> {
                 val a = o.getJSONArray("reminders")
                 reminders.value = List(a.length()) { i ->

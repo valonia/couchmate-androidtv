@@ -98,7 +98,9 @@ fun BrowseScreen(sync: SyncClient, api: Api, onOpenPlayer: () -> Unit, onSetting
     // Källor från plugins (t.ex. Twitch) – hämtas från servern och visas i menyn mellan Favoriter och Historik.
     var sources by remember { mutableStateOf<List<se.synctv.Source>>(emptyList()) }
     var sourceId by rememberSaveable { mutableStateOf<String?>(null) }
-    LaunchedEffect(Unit) {
+    // Hämtas direkt när ett plugin slås på/av (servern meddelar), och annars varje minut.
+    val sourcesVersion by sync.sourcesVersion.collectAsState()
+    LaunchedEffect(sourcesVersion, connected) {
         while (true) {
             runCatching { api.sources() }.onSuccess { sources = it }
             delay(60_000)
