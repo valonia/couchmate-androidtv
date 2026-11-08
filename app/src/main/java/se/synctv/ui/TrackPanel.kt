@@ -46,7 +46,7 @@ import se.synctv.Prefs
 import java.util.Locale
 
 /** Ett val i panelen (undertext eller ljudspår). */
-data class TrackOption(val label: String, val selected: Boolean, val apply: () -> Unit)
+data class TrackOption(val label: String, val selected: Boolean, val action: Boolean = false, val apply: () -> Unit)
 
 
 private fun languageName(code: String?): String? {
@@ -259,9 +259,10 @@ fun applyStreamQuality(player: ExoPlayer, prefs: Prefs, isStream: Boolean) {
 
 /** Panel från höger för livestreams: kvalitet och chatt (gäller bara den här TV:n). */
 @Composable
-fun StreamPanel(quality: List<TrackOption>, chat: List<TrackOption>?, onClose: () -> Unit) {
+fun StreamPanel(sections: List<Pair<String, List<TrackOption>>>, onClose: () -> Unit) {
     val firstFocus = remember { FocusRequester() }
-    val focusIdx = quality.indexOfFirst { it.selected }.coerceAtLeast(0)
+    // Fokus på det valda i första rutan (eller dess första rad).
+    val focusIdx = sections.firstOrNull()?.second?.indexOfFirst { it.selected }?.coerceAtLeast(0) ?: 0
     LaunchedEffect(Unit) { delay(80); runCatching { firstFocus.requestFocus() } }
 
     Row(Modifier.fillMaxSize()) {
@@ -271,20 +272,18 @@ fun StreamPanel(quality: List<TrackOption>, chat: List<TrackOption>?, onClose: (
                 .background(Color(0xFF0A0C10))
                 .padding(start = 24.dp, end = 32.dp, top = 32.dp, bottom = 24.dp),
         ) {
-            Text(t("Ström", "Stream"), fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 14.dp))
+            Text(t("Inställningar", "Settings"), fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 14.dp))
             Text(t("Gäller bara den här TV:n", "Only affects this TV"), fontSize = 14.sp, color = Palette.Faint, modifier = Modifier.padding(start = 14.dp, top = 2.dp, bottom = 14.dp))
             LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                if (chat != null) {
-                    item { Header(t("Chatt", "Chat")) }
-                    itemsIndexed(chat) { _, opt -> OptionRow(opt, Modifier) }
-                    item { Spacer(Modifier.height(18.dp)) }
+                sections.forEachIndexed { si, (title, options) ->
+                    if (si > 0) item { Spacer(Modifier.height(18.dp)) }
+                    item { Header(title) }
+                    itemsIndexed(options) { idx, opt ->
+                        OptionRow(opt, if (si == 0 && idx == focusIdx) Modifier.focusRequester(firstFocus) else Modifier)
+                    }
                 }
-                item { Header(t("Kvalitet", "Quality")) }
-                itemsIndexed(quality) { idx, opt ->
-                    OptionRow(opt, if (idx == focusIdx) Modifier.focusRequester(firstFocus) else Modifier)
-                }
-                if (quality.size == 1) item {
-                    Text(t("Strömmen har bara en kvalitet", "The stream has only one quality"), fontSize = 14.sp, color = Palette.Faint, modifier = Modifier.padding(start = 14.dp, top = 4.dp))
+                if (sections.isEmpty()) item {
+                    Text(t("Inga inställningar för den här strömmen", "No settings for this stream"), fontSize = 14.sp, color = Palette.Faint, modifier = Modifier.padding(start = 14.dp))
                 }
             }
         }
@@ -309,7 +308,7 @@ private fun Header(text: String) {
 @Composable
 private fun OptionRow(opt: TrackOption, modifier: Modifier) {
     FocusRow(onClick = opt.apply, selected = opt.selected, height = 52.dp, modifier = modifier) {
-        Text(if (opt.selected) "✓" else "", fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(30.dp))
+        Text(if (opt.selected) "✓" else if (opt.action) "›" else "", fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(30.dp))
         Text(opt.label, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

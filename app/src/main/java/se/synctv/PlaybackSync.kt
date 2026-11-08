@@ -24,6 +24,9 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
         private set
 
     private var loadedUrl: String? = null
+
+    /** Adressen som spelas (för plugin-källor med egna val i inställningarna). */
+    var urlFor: (Media) -> String = { it.url }
     private var seekedVersion = -1
     private var readyVersion = -1
     private var cooldownUntil = 0L
@@ -69,8 +72,9 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
             return
         }
 
-        if (media.url != loadedUrl) {
-            loadedUrl = media.url
+        val url = urlFor(media)
+        if (url != loadedUrl) {
+            loadedUrl = url
             seekedVersion = -1
             readyVersion = -1
             correcting = false
@@ -78,7 +82,7 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
             leadCheck = false
             rateWorks = null
             setRate(1f, force = true)
-            load(media.url)
+            load(url)
             if (!media.isLive) {
                 // Går man med mitt i en film startar man direkt där de andra är.
                 val start = if (st.paused || sync.serverNow() < st.refTime) st.position
@@ -93,7 +97,7 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
             status = t("Uppspelningsfel ($lastError) – försöker igen…", "Playback error ($lastError) – retrying…")
             if (now - errorAt > 3000) {
                 errorAt = now
-                if (media.isLive) load(media.url) else player.prepare()
+                if (media.isLive) load(url) else player.prepare()
             }
             return
         }
@@ -112,7 +116,7 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
         if (livePaused) {
             // Hoppa tillbaka till live-läget när någon trycker play igen.
             livePaused = false
-            load(st.media!!.url)
+            load(urlFor(st.media!!))
         }
         player.playWhenReady = true
         status = if (player.playbackState == Player.STATE_BUFFERING) t("Buffrar…", "Buffering…") else ""

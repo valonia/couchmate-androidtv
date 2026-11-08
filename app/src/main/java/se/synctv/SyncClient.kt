@@ -175,6 +175,22 @@ class SyncClient(
         }
     }
 
+    private fun parsePlayerSpec(o: JSONObject): PlayerSpec {
+        val k = o.optJSONObject("keys")
+        val keys = listOf("ok", "up", "down", "left", "right").associateWith { k?.optString(it).orEmpty().ifEmpty { "none" } }
+        val a = o.optJSONArray("settings")
+        val settings = if (a == null) emptyList() else List(a.length()) { i ->
+            val s = a.getJSONObject(i)
+            val opts = s.optJSONArray("options")
+            SpecSection(
+                id = s.optString("id"), type = s.optString("type"), title = s.optStringOrNull("title"),
+                options = if (opts == null) emptyList() else List(opts.length()) { j -> opts.getJSONObject(j).let { SpecOption(it.optString("id"), it.optString("label")) } },
+                default = s.optStringOrNull("default"),
+            )
+        }
+        return PlayerSpec(keys, settings)
+    }
+
     private fun parseState(o: JSONObject): RoomState {
         val media = o.optJSONObject("media")?.let { j ->
             val url = j.getString("url").let { if (it.startsWith("/")) base + it else it }
@@ -190,6 +206,7 @@ class SyncClient(
                 seriesId = j.optStringOrNull("seriesId"),
                 live = j.optBoolean("live"),
                 chat = j.optBoolean("chat"),
+                player = j.optJSONObject("player")?.let(::parsePlayerSpec),
             )
         }
         val upNext = o.optJSONObject("upNext")?.let { u ->
@@ -223,6 +240,9 @@ class SyncClient(
     // ------------------------------------------------------------ kommandon
 
     /** Visa chatten (servern skickar bara chatt till de som visar den). */
+    /** En knapp i spelarens inställningar (pluginet bestämmer vad som händer). */
+    fun sourceAction(action: String) = send(JSONObject().put("type", "source_action").put("action", action))
+
     fun setChat(on: Boolean) {
         if (chatOn == on) return
         chatOn = on

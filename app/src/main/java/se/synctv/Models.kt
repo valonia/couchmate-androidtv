@@ -97,7 +97,11 @@ data class Media(
     val live: Boolean = false,
     /** Källan har livechatt (t.ex. Twitch). */
     val chat: Boolean = false,
+    /** Plugin-källor: pluginet bestämmer spelarens knappar och inställningar. */
+    val player: PlayerSpec? = null,
 ) {
+    /** Källa och objekt för plugin-media ("twitch:lofigirl" → "twitch", "lofigirl"). */
+    val sourceId get() = if (type == "plugin") id.substringBefore(":") else null
     val key get() = "$type:$id"
     /** TV-kanaler och liveströmmar från plugin-källor. */
     val isLive get() = type == "live" || live
@@ -171,6 +175,15 @@ fun formatTime(sec: Double): String {
     return if (h > 0) "%d:%02d:%02d".format(h, m, r) else "%d:%02d".format(m, r)
 }
 
+/**
+ * Spelarens utseende för en plugin-källa, bestämt av pluginet:
+ * keys = vad OK/▲/▼/◀/▶ gör ("pause", "settings", "chat", "info", "none"),
+ * settings = rutorna i inställningspanelen (quality, chat, audio, subtitles, choice, actions).
+ */
+data class PlayerSpec(val keys: Map<String, String>, val settings: List<SpecSection>)
+data class SpecSection(val id: String, val type: String, val title: String?, val options: List<SpecOption> = emptyList(), val default: String? = null)
+data class SpecOption(val id: String, val label: String)
+
 /** Ett chattmeddelande från en livestream (t.ex. Twitch). */
 data class ChatMsg(val user: String, val color: String?, val text: String)
 
@@ -202,6 +215,10 @@ class Prefs(context: Context) {
     var streamHeight: Int
         get() = sp.getInt("streamHeight", 0)
         set(v) = sp.edit().putInt("streamHeight", v).apply()
+
+    /** Egna val i en källas inställningar (type "choice"), per källa och val. */
+    fun sourceOpt(source: String, id: String): String? = sp.getString("opt.$source.$id", null)
+    fun setSourceOpt(source: String, id: String, value: String) = sp.edit().putString("opt.$source.$id", value).apply()
 
     /** Språk: "auto" (följer TV:n), "sv" eller "en". */
     var language: String

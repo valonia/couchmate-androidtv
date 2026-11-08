@@ -183,6 +183,16 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
     LaunchedEffect(chatVisible) { sync.setChat(chatVisible) }
     LaunchedEffect(media?.key) { applyStreamQuality(player, prefs, stream) }
     fun toggleChat() { showChat = !showChat; prefs.chatOn = showChat }
+    // Pluginets egna val (type "choice") skickas med i strömadressen: ?opt.<id>=<värde>.
+    var optVersion by remember { mutableStateOf(0) }
+    fun optValue(m: Media, s: se.synctv.SpecSection) = m.sourceId?.let { prefs.sourceOpt(it, s.id) }?.takeIf { v -> s.options.any { it.id == v } } ?: s.default
+    LaunchedEffect(Unit) {
+        controller.urlFor = { m ->
+            val choices = m.player?.settings?.filter { it.type == "choice" }.orEmpty()
+            if (m.type != "plugin" || choices.isEmpty()) m.url
+            else m.url + (if ('?' in m.url) "&" else "?") + choices.joinToString("&") { s -> "opt.${s.id}=" + java.net.URLEncoder.encode(optValue(m, s) ?: "", "UTF-8") }
+        }
+    }
 
     LaunchedEffect(media?.categoryId, media?.type) {
         val cat = media?.categoryId
@@ -260,14 +270,24 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
                 if (anyPanel) return@onKeyEvent false // panelerna sköter sig själva
                 if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false
                 val firstPress = ev.nativeKeyEvent.repeatCount == 0
-                // Livestream: OK = paus/spela, ▼/▶ = kvalitet & chatt, ◀ = visa/dölj chatten.
+                // Livestream från en plugin-källa: pluginet bestämmer vad knapparna gör.
                 if (stream && sync.state.value?.reminder == null) {
-                    when (ev.key) {
-                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> { if (firstPress) { sync.toggle(); poke() }; return@onKeyEvent true }
-                        Key.DirectionRight, Key.DirectionDown -> { if (firstPress) streamPanel = true; return@onKeyEvent true }
-                        Key.DirectionLeft -> { if (firstPress) { if (media?.chat == true) toggleChat() else streamPanel = true }; return@onKeyEvent true }
-                        Key.DirectionUp -> { poke(); return@onKeyEvent true }
-                        else -> Unit
+                    val k = when (ev.key) {
+                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> "ok"
+                        Key.DirectionUp -> "up"
+                        Key.DirectionDown -> "down"
+                        Key.DirectionLeft -> "left"
+                        Key.DirectionRight -> "right"
+                        else -> null
+                    }
+                    if (k != null) {
+                        if (firstPress) when (media?.player?.keys?.get(k) ?: defaultKey(k)) {
+                            "pause" -> { sync.toggle(); poke() }
+                            "settings" -> streamPanel = true
+                            "chat" -> if (media?.chat == true) toggleChat() else poke()
+                            else -> poke()
+                        }
+                        return@onKeyEvent true
                     }
                 }
                 when (ev.key) {
@@ -334,7 +354,7 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
         ) {
             if (st != null && media != null) {
                 if (media.type == "plugin") {
-                    StreamOverlay(st, media, members, connected, controller.status, api, hasChat = media.chat, chatOn = chatVisible)
+                    StreamOverlay(st, media, members, connected, controller.status, api, chatOn = chatVisible)
                 } else if (media.isLive) {
                     LiveOverlay(st, media, epg[media.id], channels.firstOrNull { it.id == media.id }, members, connected, controller.status, api)
                 } else {
@@ -380,14 +400,31 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
             enter = slideInHorizontally { it } + fadeIn(),
             exit = slideOutHorizontally { it } + fadeOut(),
         ) {
-            StreamPanel(
-                quality = qualityOptions(player, tracks, prefs),
-                chat = if (media?.chat == true) listOf(
-                    TrackOption(t("Visa chatten", "Show chat"), showChat) { if (!showChat) toggleChat() },
-                    TrackOption(t("Dölj chatten", "Hide chat"), !showChat) { if (showChat) toggleChat() },
-                ) else null,
-                onClose = { streamPanel = false },
-            )
+            // Rutorna som pluginet har valt, i dess ordning.
+            val m = media
+            val optRead = optVersion // läs så att panelen ritas om när ett val ändras
+            val sections = (m?.player?.settings ?: defaultSettings(m?.chat == true)).mapNotNull { s ->
+                when (s.type) {
+                    "quality" -> (s.title ?: t("Kvalitet", "Quality")) to qualityOptions(player, tracks, prefs)
+                    "chat" -> if (m?.chat == true) (s.title ?: t("Chatt", "Chat")) to listOf(
+                        TrackOption(t("Visa chatten", "Show chat"), showChat) { if (!showChat) toggleChat() },
+                        TrackOption(t("Dölj chatten", "Hide chat"), !showChat) { if (showChat) toggleChat() },
+                    ) else null
+                    "audio" -> audioOptions(player, tracks, prefs).takeIf { it.size > 1 }?.let { (s.title ?: t("Ljud", "Audio")) to it }
+                    "subtitles" -> subtitleOptions(player, tracks, prefs).takeIf { it.size > 1 }?.let { (s.title ?: t("Undertext", "Subtitles")) to it }
+                    "choice" -> if (m != null) (s.title ?: s.id) to s.options.map { o ->
+                        TrackOption(o.label, optValue(m, s) == o.id) {
+                            m.sourceId?.let { prefs.setSourceOpt(it, s.id, o.id) }
+                            optVersion++
+                        }
+                    } else null
+                    "actions" -> (s.title ?: t("Åtgärder", "Actions")) to s.options.map { o ->
+                        TrackOption(o.label, false, action = true) { sync.sourceAction(o.id); streamPanel = false }
+                    }
+                    else -> null
+                }
+            }
+            StreamPanel(sections = sections, onClose = { streamPanel = false })
         }
 
         // Påminnelse: kanalen byts snart för alla
@@ -475,6 +512,29 @@ private fun TopStrip(st: RoomState, members: List<Member>, connected: Boolean) {
     }
 }
 
+/** Standard när pluginet inte har bestämt något: OK paus, ▼/▶ inställningar, ◀ chatt. */
+private fun defaultKey(k: String) = when (k) { "ok" -> "pause"; "down", "right" -> "settings"; "left" -> "chat"; else -> "info" }
+
+private fun defaultSettings(chat: Boolean) = listOfNotNull(
+    if (chat) se.synctv.SpecSection("chat", "chat", null) else null,
+    se.synctv.SpecSection("quality", "quality", null),
+    se.synctv.SpecSection("audio", "audio", null),
+)
+
+/** Hjälptexten nederst, byggd från pluginets knappar. */
+private fun keyHints(media: Media, chatOn: Boolean): String {
+    val names = listOf("ok" to "OK", "up" to "▲", "down" to "▼", "left" to "◀", "right" to "▶")
+    val parts = names.mapNotNull { (k, glyph) ->
+        when (media.player?.keys?.get(k) ?: defaultKey(k)) {
+            "pause" -> "$glyph  " + t("paus/spela", "pause/play")
+            "settings" -> "$glyph  " + t("inställningar", "settings")
+            "chat" -> if (media.chat) "$glyph  " + (if (chatOn) t("dölj chatt", "hide chat") else t("visa chatt", "show chat")) else null
+            else -> null
+        }
+    }
+    return (parts + t("Tillbaka  meny", "Back  menu")).joinToString("   ·   ")
+}
+
 /** Overlay för livestreams från källor (t.ex. Twitch): bild, titel, kanal och LIVE. */
 @Composable
 private fun StreamOverlay(
@@ -484,7 +544,6 @@ private fun StreamOverlay(
     connected: Boolean,
     status: String,
     api: Api,
-    hasChat: Boolean,
     chatOn: Boolean,
 ) {
     Box(Modifier.fillMaxSize()) {
@@ -513,8 +572,7 @@ private fun StreamOverlay(
             Row {
                 if (status.isNotEmpty()) Text(status, fontSize = 14.sp, color = Color(0xFF9FB4FF))
                 Spacer(Modifier.weight(1f))
-                val chatHint = if (!hasChat) "" else if (chatOn) t("◀  dölj chatt   ·   ", "◀  hide chat   ·   ") else t("◀  visa chatt   ·   ", "◀  show chat   ·   ")
-                Text(chatHint + t("▼  kvalitet & chatt   ·   OK  paus/spela   ·   Tillbaka  meny", "▼  quality & chat   ·   OK  pause/play   ·   Back  menu"), fontSize = 13.sp, color = Palette.Faint)
+                Text(keyHints(media, chatOn), fontSize = 13.sp, color = Palette.Faint)
             }
         }
     }
@@ -532,7 +590,7 @@ private fun ChatPanel(messages: List<se.synctv.ChatMsg>, modifier: Modifier = Mo
         // Nyaste meddelandet längst ner och alltid synligt.
         val listState = rememberLazyListState()
         LaunchedEffect(messages.lastOrNull()) { listState.scrollToItem(0) }
-        LazyColumn(Modifier.weight(1f), state = listState, reverseLayout = true, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        LazyColumn(Modifier.weight(1f), state = listState, reverseLayout = true, verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom)) {
             val list = messages.asReversed()
             items(list.size) { i ->
                 val m = list[i]
