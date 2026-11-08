@@ -106,7 +106,7 @@ fun HistoryScreen(sync: SyncClient, api: Api) {
         val list = entries
         // Från menyn: tillbaka till raden man var på, annars översta – inte raden i samma höjd.
         val listState = rememberLazyListState()
-        val entry = rememberFocusEntryByKey(listState)
+        val entry = rememberFocusEntryByKey(listState, "history")
         when {
             error != null && list == null -> Text(t("Fel: $error", "Error: $error"), color = Color(0xFFFF8A80), modifier = Modifier.padding(12.dp))
             list == null -> Text(t("Laddar…", "Loading…"), color = Palette.Dim, modifier = Modifier.padding(12.dp))

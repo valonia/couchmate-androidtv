@@ -117,9 +117,17 @@ fun Room(prefs: Prefs, seenMedia: String?, onSeen: (String?) -> Unit, onSettings
         if (st.media != null && st.action == "load" && st.changedBy == prefs.name) inPlayer = true
     }
 
+    // Menyns läge (vald meny, grupp, serie, rad och scroll) sparas medan spelaren visas,
+    // så att man kommer tillbaka dit man var.
+    val saved = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     if (inPlayer && state?.media != null) {
         PlayerScreen(sync, api, onExit = { inPlayer = false })
     } else {
-        BrowseScreen(sync, api, onOpenPlayer = { inPlayer = true }, onSettings = onSettings)
+        saved.SaveableStateProvider("browse") {
+            val focusMemory = androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+            androidx.compose.runtime.CompositionLocalProvider(se.synctv.ui.LocalFocusMemory provides focusMemory) {
+                BrowseScreen(sync, api, onOpenPlayer = { inPlayer = true }, onSettings = onSettings)
+            }
+        }
     }
 }

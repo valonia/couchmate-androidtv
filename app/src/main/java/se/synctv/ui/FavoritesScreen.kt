@@ -1,7 +1,8 @@
-@file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.tv.material3.ExperimentalTvMaterial3Api::class)
 
 package se.synctv.ui
 
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.filled.Notifications
@@ -151,7 +152,7 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
 
         // Från menyn: tillbaka till raden man var på, annars översta – inte raden i samma höjd.
         val listState = rememberLazyListState()
-        val entry = rememberFocusEntryByKey(listState)
+        val entry = rememberFocusEntryByKey(listState, "favorites")
         LazyColumn(state = listState, modifier = Modifier.focusEntry(entry), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
             if (reminders.isNotEmpty()) item(key = "fav-reminders") { Box(entry.item("fav-reminders")) {
                 FavSection(t("Påminnelser", "Reminders"), reminders.size) {
@@ -255,7 +256,9 @@ private fun FavSection(title: String, count: Int, content: androidx.compose.foun
             Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Text("  $count", fontSize = 20.sp, color = Palette.Faint)
         }
+        // focusRestorer: tillbaka till kortet man var på (även efter spelaren).
         LazyRow(
+            modifier = Modifier.focusRestorer(),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             content = content,

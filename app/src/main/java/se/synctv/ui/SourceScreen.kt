@@ -1,7 +1,10 @@
-@file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.tv.material3.ExperimentalTvMaterial3Api::class)
 
 package se.synctv.ui
 
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -112,7 +115,7 @@ fun SourceCard(item: Item, playing: Boolean, onClick: () -> Unit, modifier: Modi
 
 /** En rad med kort (används både i källans vy och i sökresultaten). */
 @Composable
-fun SourceRow(title: String, items: List<Item>, sync: SyncClient, playingId: String?) {
+fun SourceRow(title: String, items: List<Item>, sync: SyncClient, playingId: String?, playingFocus: androidx.compose.ui.focus.FocusRequester? = null, onCardFocus: (String) -> Unit = {}) {
     Column {
         Row(Modifier.padding(start = 12.dp, bottom = 8.dp)) {
             Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold)
@@ -120,7 +123,11 @@ fun SourceRow(title: String, items: List<Item>, sync: SyncClient, playingId: Str
         }
         LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             items(items, key = { it.id }) { item ->
-                SourceCard(item, playing = item.id == playingId, onClick = { sync.loadSource(item) })
+                SourceCard(
+                    item, playing = item.id == playingId, onClick = { sync.loadSource(item) },
+                    modifier = (if (playingFocus != null && item.id == playingId) Modifier.focusRequester(playingFocus) else Modifier)
+                        .onFocusChanged { if (it.isFocused) onCardFocus(item.id) },
+                )
             }
         }
     }
@@ -145,14 +152,29 @@ fun SourceScreen(sync: SyncClient, api: Api, source: Source, playingId: String?)
         val d = data
         // Från menyn: tillbaka till raden man var på, annars översta – inte raden i samma höjd.
         val listState = rememberLazyListState()
-        val entry = rememberFocusEntryByKey(listState)
+        val entry = rememberFocusEntryByKey(listState, "source", autoRestore = false)
+        var focusedCard by remember { mutableStateOf<String?>(null) }
+        // Tillbaka från spelaren: till strömmen som spelas (listan kan ha bytt ordning), annars raden man var på.
+        val playingFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+        val playingRow = d?.sections?.firstOrNull { s -> s.items.any { it.id == playingId } }?.id
+        LaunchedEffect(d != null) {
+            if (d == null || !entry.shouldRestore) return@LaunchedEffect
+            if (playingRow == null) { entry.restore(); return@LaunchedEffect }
+            // Raden lägger sig till rätta en stund efter att listan kommit – försök tills rätt kort har fokus.
+            focusedCard = null
+            repeat(25) {
+                delay(120)
+                if (focusedCard == playingId) return@LaunchedEffect
+                runCatching { playingFocus.requestFocus() }
+            }
+        }
         when {
             d == null && error != null -> Text(t("Fel: $error", "Error: $error"), color = Color(0xFFFF8A80), fontSize = 16.sp, modifier = Modifier.padding(12.dp))
             d == null -> Text(t("Laddar…", "Loading…"), color = Palette.Dim, fontSize = 16.sp, modifier = Modifier.padding(12.dp))
             d.sections.all { it.items.isEmpty() } -> Text(d.message ?: t("Inget att visa just nu.", "Nothing to show right now."), color = Palette.Dim, fontSize = 16.sp, modifier = Modifier.padding(12.dp))
             else -> LazyColumn(state = listState, modifier = Modifier.focusEntry(entry), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                 d.message?.let { m -> item(key = "msg") { Text(m, color = Palette.Dim, fontSize = 15.sp, modifier = Modifier.padding(horizontal = 12.dp)) } }
-                items(d.sections.filter { it.items.isNotEmpty() }, key = { it.id }) { s -> Box(entry.item(s.id)) { SourceRow(s.title, s.items, sync, playingId) } }
+                items(d.sections.filter { it.items.isNotEmpty() }, key = { it.id }) { s -> Box(entry.item(s.id)) { SourceRow(s.title, s.items, sync, playingId, if (s.id == playingRow) playingFocus else null) { focusedCard = it } } }
             }
         }
     }

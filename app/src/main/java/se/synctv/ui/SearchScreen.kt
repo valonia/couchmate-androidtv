@@ -1,7 +1,8 @@
-@file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.tv.material3.ExperimentalTvMaterial3Api::class)
 
 package se.synctv.ui
 
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.foundation.lazy.rememberLazyListState
 import se.synctv.t
 import androidx.activity.compose.BackHandler
@@ -176,7 +177,7 @@ fun SearchScreen(sync: SyncClient, api: Api) {
         val r = result
         // Ner från sökrutan eller in från menyn: tillbaka till raden man var på, annars översta.
         val listState = rememberLazyListState()
-        val entry = rememberFocusEntryByKey(listState)
+        val entry = rememberFocusEntryByKey(listState, "search")
         if (r != null && !r.isEmpty) {
             LazyColumn(
                 state = listState,
@@ -236,7 +237,9 @@ private fun ResultSection(title: String, count: Int, content: androidx.compose.f
             Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Text("  $count", fontSize = 20.sp, color = Palette.Faint)
         }
+        // focusRestorer: tillbaka till kortet man var på (även efter spelaren).
         LazyRow(
+            modifier = Modifier.focusRestorer(),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             content = content,

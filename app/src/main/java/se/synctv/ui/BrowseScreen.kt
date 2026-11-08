@@ -111,7 +111,9 @@ fun BrowseScreen(sync: SyncClient, api: Api, onOpenPlayer: () -> Unit, onSetting
         if (section == Section.SOURCE && sources.isNotEmpty() && sources.none { it.id == sourceId }) section = Section.LIVE
     }
     val firstFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { delay(100); runCatching { firstFocus.requestFocus() } }
+    // Vilken lista som hade fokus (så att man hamnar där igen efter spelaren). null = menyn.
+    val focusMemory = LocalFocusMemory.current ?: remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) { delay(100); if (focusMemory.value == null) runCatching { firstFocus.requestFocus() } }
 
     var showMembers by remember { mutableStateOf(false) }
     BackHandler(enabled = showMembers) { showMembers = false }
@@ -148,7 +150,7 @@ fun BrowseScreen(sync: SyncClient, api: Api, onOpenPlayer: () -> Unit, onSetting
             error = syncError,
             onMembers = { showMembers = true },
             selectedFocus = firstFocus,
-            onRailFocus = { railFocused = it },
+            onRailFocus = { railFocused = it; if (it) focusMemory.value = null },
         )
 
         Box(Modifier.weight(1f).fillMaxHeight().padding(start = 20.dp, end = 24.dp, top = 22.dp, bottom = 20.dp)) {
@@ -244,7 +246,7 @@ private fun GroupList(
         SectionLabel(t("Grupper", "Groups"), Modifier.padding(start = 10.dp, top = 6.dp, bottom = 8.dp))
         // Från menyn hamnar man på vald grupp (första gången: överst), inte på raden i samma höjd.
         val listState = rememberLazyListState()
-        val entry = rememberFocusEntry(listState)
+        val entry = rememberFocusEntry(listState, "groups")
         val selIdx = categories.indexOfFirst { it.id == selectedId }
         LaunchedEffect(categories.size) {
             if (selIdx > 0 && listState.layoutInfo.visibleItemsInfo.none { it.index == selIdx && it.offset >= 0 }) listState.scrollToItem(selIdx)
@@ -308,8 +310,13 @@ private fun LiveBrowser(sync: SyncClient, api: Api, playingId: String?) {
     val catName = cats.firstOrNull { it.id == catId }?.name ?: ""
     // Från grupperna: tillbaka till kanalen man var på, annars den som spelas, annars översta.
     val chState = rememberLazyListState()
-    val chEntry = rememberFocusEntry(chState)
-    LaunchedEffect(catId) { chEntry.last = null; chState.scrollToItem(0) }
+    val chEntry = rememberFocusEntry(chState, "channels")
+    // Ny grupp: börja överst. (Inte när man bara kommer tillbaka från spelaren.)
+    var shownCat by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(catId) {
+        if (shownCat != null && shownCat != catId) { chEntry.last = null; chState.scrollToItem(0) }
+        shownCat = catId
+    }
     Row(Modifier.fillMaxSize()) {
         GroupList(cats, catId, { catId = it.id }, Modifier.width(250.dp))
         Spacer(Modifier.width(14.dp))
@@ -360,7 +367,8 @@ private fun VodBrowser(sync: SyncClient, api: Api, section: Section) {
     var catId by rememberSaveable { mutableStateOf<String?>(null) }
     var items by remember { mutableStateOf<List<Item>>(emptyList()) }
     var focused by remember { mutableStateOf<Item?>(null) }
-    var series by remember { mutableStateOf<Item?>(null) }
+    // Öppnad serie sparas (som id) så att man kommer tillbaka till avsnitten efter spelaren.
+    var seriesId by rememberSaveable { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
 
@@ -373,7 +381,6 @@ private fun VodBrowser(sync: SyncClient, api: Api, section: Section) {
     LaunchedEffect(catId) {
         val c = catId ?: return@LaunchedEffect
         loading = true
-        series = null
         try {
             items = api.items(section.kind, c)
             focused = items.firstOrNull()
@@ -381,12 +388,18 @@ private fun VodBrowser(sync: SyncClient, api: Api, section: Section) {
         } catch (e: Exception) { error = e.message }
         loading = false
     }
-    BackHandler(enabled = series != null) { series = null }
+    val series = items.firstOrNull { it.id == seriesId }
+    BackHandler(enabled = series != null) { seriesId = null }
     val catName = cats.firstOrNull { it.id == catId }?.name
     // Från grupperna: tillbaka till filmen man var på, annars översta.
     val gridState = rememberLazyGridState()
-    val gridEntry = rememberFocusEntry(gridState)
-    LaunchedEffect(catId) { gridEntry.last = null; gridState.scrollToItem(0) }
+    val gridEntry = rememberFocusEntry(gridState, "grid")
+    // Ny grupp: börja överst och stäng serien. (Inte när man bara kommer tillbaka från spelaren.)
+    var shownCat by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(catId) {
+        if (shownCat != null && shownCat != catId) { gridEntry.last = null; seriesId = null; gridState.scrollToItem(0) }
+        shownCat = catId
+    }
 
     Row(Modifier.fillMaxSize()) {
         GroupList(cats, catId, { catId = it.id }, Modifier.width(250.dp))
@@ -395,7 +408,7 @@ private fun VodBrowser(sync: SyncClient, api: Api, section: Section) {
             val s = series
             when {
                 error != null -> Message(t("Fel: $error", "Error: $error"), error = true)
-                s != null -> SeriesDetail(api, sync, s.copy(categoryId = catId, categoryName = catName)) { ep, seasonNo ->
+                s != null -> androidx.compose.runtime.key(s.id) { SeriesDetail(api, sync, s.copy(categoryId = catId, categoryName = catName)) { ep, seasonNo ->
                     sync.load(
                         type = "episode", id = ep.id, ext = ep.ext,
                         title = cleanTitle(s.name),
@@ -404,7 +417,7 @@ private fun VodBrowser(sync: SyncClient, api: Api, section: Section) {
                         categoryId = catId,
                         seriesId = s.id,
                     )
-                }
+                } }
                 loading && items.isEmpty() -> Message(t("Laddar…", "Loading…"))
                 else -> {
                     focused?.let { Hero(it.name, it.year, it.genre, it.rating, it.plot, api.abs(it.icon), api.abs(it.backdrop ?: it.icon)) }
@@ -425,7 +438,7 @@ private fun VodBrowser(sync: SyncClient, api: Api, section: Section) {
                                 iconUrl = api.abs(item.icon),
                                 onFocus = { focused = item; gridEntry.last = idx },
                                 onClick = {
-                                    if (section == Section.SERIES) series = item
+                                    if (section == Section.SERIES) seriesId = item.id
                                     else sync.load("movie", item.id, item.ext, cleanTitle(item.name), yearFromTitle(item.name) ?: item.year, item.icon, catId)
                                 },
                                 favorite = favMap.containsKey(favKey(favType, item.id)),
@@ -497,12 +510,15 @@ internal fun SeriesDetail(api: Api, sync: SyncClient, series: Item, onPlay: (Epi
     }
     var info by remember(series.id) { mutableStateOf<SeriesInfo?>(null) }
     var error by remember(series.id) { mutableStateOf<String?>(null) }
-    var seasonIdx by remember(series.id) { mutableIntStateOf(0) }
+    var seasonIdx by rememberSaveable(series.id) { mutableIntStateOf(0) }
     val firstEp = remember { FocusRequester() }
+    val epState = rememberLazyListState()
+    val epEntry = rememberFocusEntry(epState, "episodes")
     LaunchedEffect(series.id) {
         try { info = api.seriesInfo(series.id) } catch (e: Exception) { error = e.message }
         delay(100)
-        runCatching { firstEp.requestFocus() }
+        // Tillbaka från spelaren: avsnittet man spelade (sköts av epEntry), annars första avsnittet.
+        if (!epEntry.shouldRestore) runCatching { firstEp.requestFocus() }
     }
 
     val i = info
@@ -543,14 +559,15 @@ internal fun SeriesDetail(api: Api, sync: SyncClient, series: Item, onPlay: (Epi
                 Spacer(Modifier.height(10.dp))
                 val season = i.seasons.getOrNull(seasonIdx) ?: i.seasons.first()
                 LazyColumn(
-                    Modifier.background(Palette.Panel, RoundedCornerShape(12.dp)).padding(8.dp),
+                    Modifier.background(Palette.Panel, RoundedCornerShape(12.dp)).padding(8.dp).focusEntry(epEntry),
+                    state = epState,
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     itemsIndexed(season.episodes) { idx, ep ->
                         FocusRow(
                             onClick = { onPlay(ep, season.number) },
                             height = 70.dp,
-                            modifier = if (idx == 0) Modifier.focusRequester(firstEp) else Modifier,
+                            modifier = (if (idx == 0) Modifier.focusRequester(firstEp) else Modifier).then(epEntry.item(idx)),
                         ) {
                             Text("E%02d".format(ep.episode), fontSize = 15.sp, color = Palette.Dim, modifier = Modifier.width(56.dp))
                             Thumb(api.abs(ep.icon ?: i.icon ?: series.icon), ep.title, Modifier.width(96.dp).height(54.dp), fit = false)
