@@ -154,7 +154,7 @@ class SyncClient(
                 Favorite(
                     key = f.getString("key"), plugin = f.getString("plugin"), id = f.getString("id"), kind = f.optStringOrNull("kind"),
                     title = f.optString("title"), subtitle = f.optStringOrNull("subtitle"), image = f.optStringOrNull("image"),
-                    live = f.optBoolean("live"), action = f.optStringOrNull("action") ?: "play", addedBy = f.optStringOrNull("addedBy"),
+                    live = f.optBoolean("live"), action = f.optStringOrNull("action") ?: "play", view = f.optStringOrNull("view"), addedBy = f.optStringOrNull("addedBy"),
                     newCount = f.optInt("newCount"), newLabel = f.optStringOrNull("newLabel"),
                 )
             }
@@ -188,7 +188,7 @@ class SyncClient(
                 default = s.optStringOrNull("default"),
             )
         }
-        return PlayerSpec(keys, settings, o.optBoolean("channels"), o.optBoolean("guide"))
+        return PlayerSpec(keys, settings, o.optBoolean("channels"), o.optBoolean("guide"), o.optJSONObject("overlay"))
     }
 
     private fun parseState(o: JSONObject): RoomState {
@@ -287,7 +287,7 @@ class SyncClient(
         if (isFavorite(item)) { favRemove(item.key); return false }
         send(JSONObject().put("type", "fav_add").put("item", JSONObject()
             .put("plugin", item.plugin).put("id", item.id).put("title", item.title).put("subtitle", item.subtitle)
-            .put("image", item.image).put("kind", item.kind).put("live", item.live).put("action", item.action)))
+            .put("image", item.image).put("kind", item.kind).put("live", item.live).put("action", item.action).put("view", item.view)))
         return true
     }
 

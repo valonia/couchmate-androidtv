@@ -370,7 +370,20 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
         ) {
             if (st != null && media != null) {
                 val hints = keyHints(spec, media, chatVisible, channels.isNotEmpty())
-                when {
+                val overlay = spec.overlay
+                if (overlay != null) {
+                    // The plugin's own overlay, bound to {{media}} and {{player}}.
+                    val position = pendingSeek ?: controller.positionSec()
+                    val duration = controller.durationSec()
+                    val playerJson = org.json.JSONObject()
+                        .put("position", position).put("duration", duration)
+                        .put("positionText", formatTime(position))
+                        .put("remainingText", if (duration > 0) "-" + formatTime(duration - position) else "")
+                        .put("progress", if (duration > 0) position / duration else 0.0)
+                        .put("paused", st.paused && !st.waiting).put("waiting", st.waiting).put("seeking", pendingSeek != null)
+                        .put("status", controller.status).put("hints", hints)
+                    PluginOverlay(sync, api, media.plugin, overlay, media.toJson(), playerJson) { TopStrip(st, members, connected) }
+                } else when {
                     live && spec.guide -> LiveOverlay(st, media, epg[media.id], channels.firstOrNull { it.key == media.key }, members, connected, controller.status, api, hints)
                     live -> StreamOverlay(st, media, members, connected, controller.status, api, hints)
                     else -> VodOverlay(

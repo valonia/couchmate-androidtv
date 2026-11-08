@@ -76,11 +76,18 @@ class Api(private val base: String, private val pin: String) {
         MenuEntry(o.optStringOrNull("core"), o.optStringOrNull("plugin"), o.optString("id"), o.optString("title"), o.optStringOrNull("icon"))
     }
 
-    suspend fun screen(plugin: String, menuId: String): Screen =
-        parseScreen(JSONObject(call("/api/screen/${enc(plugin)}/${enc(menuId)}")), plugin)
+    /** A view a plugin built from building blocks. */
+    suspend fun view(plugin: String, id: String, params: Map<String, String> = emptyMap()): JSONObject {
+        val qs = params.entries.joinToString("") { "&" + enc(it.key) + "=" + enc(it.value) }
+        return JSONObject(call("/api/view/${enc(plugin)}/${enc(id)}?_=1$qs"))
+    }
 
-    suspend fun open(plugin: String, id: String): Screen =
-        parseScreen(JSONObject(call("/api/open/${enc(plugin)}?id=" + enc(id))), plugin)
+    /** Data a view loads (any JSON: an array, an object …). */
+    suspend fun data(plugin: String, name: String, params: Map<String, String>): Any? {
+        val qs = params.entries.joinToString("") { "&" + enc(it.key) + "=" + enc(it.value) }
+        val text = call("/api/data/${enc(plugin)}/${enc(name)}?_=1$qs")
+        return org.json.JSONTokener(text).nextValue().takeIf { it != JSONObject.NULL }
+    }
 
     /** The items of a group on a "groups" screen (kept for 5 minutes). */
     suspend fun group(plugin: String, menu: String, group: String): List<Item> {

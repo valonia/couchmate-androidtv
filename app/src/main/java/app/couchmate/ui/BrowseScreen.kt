@@ -116,7 +116,8 @@ fun BrowseScreen(sync: SyncClient, api: Api, onOpenPlayer: () -> Unit, onSetting
                     sel == SEARCH_KEY -> SearchScreen(sync, api)
                     entry?.core == "favorites" -> FavoritesScreen(sync, api)
                     entry?.core == "history" -> HistoryScreen(sync, api)
-                    entry?.plugin != null -> key(entry.key) { PluginScreen(sync, api, entry.plugin, entry.id, entry.title, entry.icon) }
+                    // A plugin's menu entry: its own view, built by the plugin (open → more views, Back → back).
+                    entry?.plugin != null -> key(entry.key) { ViewHost(sync, api, ViewRef(entry.plugin, entry.id)) }
                     menu == null && menuError != null -> Message(tr("Error: {message}", "message" to menuError), error = true)
                     menu == null -> Message(tr("Loading…"))
                     menu?.none { it.plugin != null } == true -> Message(tr("Nothing to watch yet. Switch on a plugin in the admin panel on the server."))

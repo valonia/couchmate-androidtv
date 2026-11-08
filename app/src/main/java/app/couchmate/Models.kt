@@ -19,8 +19,9 @@ data class Item(
     val backdrop: String? = null,
     val description: String? = null,
     val kind: String? = null,
-    /** "play" (default) or "open" (a detail page). */
+    /** "play" (default) or "open" (the plugin's view [view] with params { id }). */
     val action: String = "play",
+    val view: String? = null,
     val live: Boolean = false,
     val number: Int? = null,
     val viewers: Int? = null,
@@ -36,16 +37,6 @@ data class Item(
 }
 
 data class ItemRow(val id: String, val title: String?, val style: String, val items: List<Item>)
-data class Group(val id: String, val title: String)
-
-/** What a plugin shows behind a menu entry or an item. */
-sealed class Screen {
-    abstract val message: String?
-    data class Rows(override val message: String?, val rows: List<ItemRow>) : Screen()
-    data class Groups(override val message: String?, val style: String, val guide: Boolean, val groups: List<Group>, val initial: String?) : Screen()
-    data class Detail(override val message: String?, val item: Item?, val facts: List<String>, val seasons: List<ItemRow>) : Screen()
-    data class Message(override val message: String?, val text: String?) : Screen()
-}
 
 data class PluginResult(val plugin: String, val name: String, val sections: List<ItemRow>)
 
@@ -90,11 +81,12 @@ data class Favorite(
     val image: String?,
     val live: Boolean,
     val action: String,
+    val view: String?,
     val addedBy: String?,
     val newCount: Int,
     val newLabel: String?,
 ) {
-    fun toItem() = Item(plugin, id, title, subtitle, image, kind = kind, action = action, live = live)
+    fun toItem() = Item(plugin, id, title, subtitle, image, kind = kind, action = action, view = view, live = live)
 }
 
 /** "Switch to this channel when the programme starts" – shared by the room. */
@@ -117,7 +109,7 @@ fun reminderKey(plugin: String, channelId: String, start: Long) = "$plugin:$chan
  * settings: the boxes in the settings panel (quality, chat, audio, subtitles, choice, actions).
  * channels: the plugin lists channels to zap between. guide: it has programme info for the overlay.
  */
-data class PlayerSpec(val keys: Map<String, String>, val settings: List<SpecSection>, val channels: Boolean, val guide: Boolean)
+data class PlayerSpec(val keys: Map<String, String>, val settings: List<SpecSection>, val channels: Boolean, val guide: Boolean, val overlay: JSONObject? = null)
 data class SpecSection(val id: String, val type: String, val title: String?, val options: List<SpecOption> = emptyList(), val default: String? = null)
 data class SpecOption(val id: String, val label: String)
 
@@ -137,6 +129,9 @@ data class Media(
 ) {
     val key get() = "$plugin:$id"
     fun toItem() = Item(plugin, id, title, subtitle, image, kind = kind, live = live)
+    /** For the plugin's overlay ({{media.title}} …). */
+    fun toJson(): JSONObject = JSONObject().put("plugin", plugin).put("id", id).put("kind", kind).put("title", title)
+        .put("subtitle", subtitle).put("image", image).put("live", live)
 }
 
 /** "Next episode", starting by itself at [startsAt] (server clock, ms). */
@@ -191,6 +186,7 @@ fun parseItem(o: JSONObject, pluginFallback: String? = null): Item? {
         description = o.optStringOrNull("description"),
         kind = o.optStringOrNull("kind"),
         action = o.optStringOrNull("action") ?: "play",
+        view = o.optStringOrNull("view"),
         live = o.optBoolean("live"),
         number = o.optIntOrNull("number"),
         viewers = o.optIntOrNull("viewers"),
@@ -205,24 +201,6 @@ fun parseItem(o: JSONObject, pluginFallback: String? = null): Item? {
 
 fun parseRows(a: JSONArray?, plugin: String? = null) = a.mapObjects { r ->
     ItemRow(r.optString("id"), r.optStringOrNull("title"), r.optString("style").ifEmpty { "landscape" }, r.optJSONArray("items").mapObjects { parseItem(it, plugin) })
-}
-
-fun parseScreen(o: JSONObject, plugin: String): Screen {
-    val message = o.optStringOrNull("message")
-    return when (o.optString("type")) {
-        "rows" -> Screen.Rows(message, parseRows(o.optJSONArray("rows"), plugin))
-        "groups" -> Screen.Groups(
-            message, o.optString("style").ifEmpty { "posters" }, o.optBoolean("guide"),
-            o.optJSONArray("groups").mapObjects { g -> g.optStringOrNull("id")?.let { Group(it, g.optString("title")) } },
-            o.optStringOrNull("initial"),
-        )
-        "detail" -> Screen.Detail(
-            message, o.optJSONObject("item")?.let { parseItem(it, plugin) },
-            o.optJSONArray("facts")?.let { a -> List(a.length()) { a.optString(it) } }.orEmpty().filter { it.isNotBlank() },
-            parseRows(o.optJSONArray("seasons"), plugin),
-        )
-        else -> Screen.Message(message, o.optStringOrNull("text"))
-    }
 }
 
 fun parsePrograms(a: JSONArray?) = a.mapObjects { p ->

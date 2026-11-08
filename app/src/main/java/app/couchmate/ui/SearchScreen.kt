@@ -90,10 +90,9 @@ fun SearchScreen(sync: SyncClient, api: Api) {
         loading = false
     }
 
-    BackHandler(enabled = opened != null) { opened = null }
     val o = opened
     if (o != null) {
-        key(o.key) { DetailView(sync, api, o.plugin, o.id, o) }
+        key(o.key) { ViewHost(sync, api, ViewRef.forItem(o), onExit = { opened = null }) }
         return
     }
     val opener = ItemOpener { item -> if (item.opens) opened = item else sync.load(item) }

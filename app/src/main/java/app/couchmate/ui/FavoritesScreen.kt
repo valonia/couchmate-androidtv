@@ -78,7 +78,6 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
     var openedKey by rememberSaveable { mutableStateOf<String?>(null) }
     var guideFor by remember { mutableStateOf<Favorite?>(null) }
     BackHandler(enabled = guideFor != null) { guideFor = null }
-    BackHandler(enabled = openedKey != null) { openedKey = null }
 
     // Now/next for the favourite channels, per plugin.
     val channels = favorites.filter { it.kind == "channel" }
@@ -100,7 +99,7 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
 
     val opened = favorites.firstOrNull { it.key == openedKey }
     if (opened != null) {
-        key(opened.key) { DetailView(sync, api, opened.plugin, opened.id, opened.toItem()) }
+        key(opened.key) { ViewHost(sync, api, ViewRef.forItem(opened.toItem()), onExit = { openedKey = null }) }
         return
     }
 
