@@ -1,6 +1,6 @@
 @file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 
-package se.synctv.ui
+package app.couchmate.ui
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
@@ -53,12 +53,15 @@ import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
-import se.synctv.Media
-import se.synctv.Member
-import se.synctv.R
-import se.synctv.t
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import app.couchmate.Media
+import app.couchmate.Member
+import app.couchmate.MenuEntry
+import app.couchmate.R
+import app.couchmate.tr
 
-/** Ikoner som saknas i Compose standardikoner (Material-ritningar, 24×24). */
+/** Icons missing from Compose's standard icons (Material drawings, 24×24). */
 object AppIcons {
     private fun icon(name: String, path: String): ImageVector =
         ImageVector.Builder(name = name, defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f)
@@ -72,30 +75,30 @@ object AppIcons {
     val Stop = icon("Stop", "M6 6h12v12H6z")
 }
 
-fun Section.icon(): ImageVector = when (this) {
-    Section.LIVE -> AppIcons.LiveTv
-    Section.MOVIES -> AppIcons.Movie
-    Section.SERIES -> AppIcons.Series
-    Section.FAVORITES -> Icons.Filled.Star
-    Section.HISTORY -> AppIcons.History
-    Section.SEARCH -> Icons.Filled.Search
-    Section.SOURCE -> AppIcons.LiveTv
+/** Icon for a built-in menu entry. */
+fun coreIcon(core: String?): ImageVector = when (core) {
+    "favorites" -> Icons.Filled.Star
+    "history" -> AppIcons.History
+    else -> AppIcons.LiveTv
 }
 
 private val COLLAPSED = 80.dp
 private val EXPANDED = 250.dp
 
+/** The search entry's key in the menu (always at the top). */
+const val SEARCH_KEY = "core/search"
+
 /**
- * Menyn till vänster. Utfälld (ikon + text) när fokus är i menyn; när man går in i innehållet
- * glider texten bort och bara ikonerna syns, så att innehållet får mer plats.
+ * The menu on the left. Expanded (icon + text) while focus is in it; when you move into the content the
+ * text slides away and only the icons remain, so the content gets more room.
+ * Search is always first and Settings always last; everything in between comes from the server, in the
+ * order chosen in the admin panel.
  */
 @Composable
 fun SideNav(
-    section: Section,
-    onSelect: (Section) -> Unit,
-    sources: List<se.synctv.Source> = emptyList(),
-    selectedSource: String? = null,
-    onSelectSource: (se.synctv.Source) -> Unit = {},
+    entries: List<MenuEntry>,
+    selectedKey: String,
+    onSelect: (String) -> Unit,
     newEpisodes: Int,
     media: Media?,
     onOpenPlayer: () -> Unit,
@@ -116,54 +119,51 @@ fun SideNav(
             .fillMaxHeight()
             .background(Palette.Panel)
             .onFocusChanged { expanded = it.hasFocus; onRailFocus(it.hasFocus) }
-            // Kommer man tillbaka till menyn hamnar fokus på den valda fliken.
+            // Coming back to the menu puts focus on the chosen entry.
             .focusProperties { enter = { selectedFocus } }
             .focusGroup()
             .padding(horizontal = 12.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        // Logga
+        // Logo
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.height(48.dp).padding(start = 10.dp)) {
             Image(painterResource(R.drawable.ic_launcher), contentDescription = null, modifier = Modifier.size(36.dp))
             Label(expanded) {
                 Row(Modifier.padding(start = 12.dp)) {
                     Text("Couch", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Palette.Text)
-                    Text("mates", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Palette.Accent)
+                    Text("mate", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Palette.Accent)
                 }
             }
         }
         Spacer(Modifier.height(14.dp))
 
-        listOf(Section.SEARCH, Section.LIVE, Section.MOVIES, Section.SERIES, Section.FAVORITES, Section.HISTORY).forEach { s ->
-            // Källor från plugins (t.ex. Twitch) ligger mellan Favoriter och Historik.
-            if (s == Section.HISTORY) sources.forEach { src ->
-                val sel = selectedSource == src.id
+        // The entries can be many (several plugins) – they scroll, the bottom part stays put.
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            // Focus coming into the menu lands on the chosen entry – or on Search while the menu is still loading.
+            val searchHoldsFocus = selectedKey == SEARCH_KEY || entries.none { it.key == selectedKey }
+            NavItem(
+                icon = Icons.Filled.Search, label = tr("Search"), expanded = expanded, selected = selectedKey == SEARCH_KEY,
+                onClick = { onSelect(SEARCH_KEY) },
+                modifier = if (searchHoldsFocus) Modifier.focusRequester(selectedFocus) else Modifier,
+            )
+            entries.forEach { e ->
+                val sel = e.key == selectedKey
                 NavItem(
-                    icon = sourceIcon(src.iconPath),
-                    label = src.name,
+                    icon = if (e.core != null) coreIcon(e.core) else pluginIcon(e.icon),
+                    label = e.title,
                     expanded = expanded,
                     selected = sel,
-                    onClick = { onSelectSource(src) },
+                    badge = if (e.core == "favorites" && newEpisodes > 0) "$newEpisodes" else null,
+                    onClick = { onSelect(e.key) },
                     modifier = if (sel) Modifier.focusRequester(selectedFocus) else Modifier,
                 )
             }
-            NavItem(
-                icon = s.icon(),
-                label = s.label,
-                expanded = expanded,
-                selected = s == section,
-                badge = if (s == Section.FAVORITES && newEpisodes > 0) "$newEpisodes" else null,
-                onClick = { onSelect(s) },
-                modifier = if (s == section) Modifier.focusRequester(selectedFocus) else Modifier,
-            )
+            NavItem(Icons.Filled.Settings, tr("Settings"), expanded, selected = false, onClick = onSettings)
         }
-        NavItem(Icons.Filled.Settings, t("Inställningar", "Settings"), expanded, selected = false, onClick = onSettings)
-
-        Spacer(Modifier.weight(1f))
 
         if (media != null) {
-            NavItem(Icons.Filled.PlayArrow, media.title, expanded, selected = false, onClick = onOpenPlayer, sublabel = t("Nu spelas", "Now playing"), accent = true)
-            NavItem(AppIcons.Stop, t("Stoppa för alla", "Stop for everyone"), expanded, selected = false, onClick = onStop)
+            NavItem(Icons.Filled.PlayArrow, media.title, expanded, selected = false, onClick = onOpenPlayer, sublabel = tr("Now playing"), accent = true)
+            NavItem(AppIcons.Stop, tr("Stop for everyone"), expanded, selected = false, onClick = onStop)
             Spacer(Modifier.height(6.dp))
         }
         Members(connected, members, error, expanded, onMembers)
@@ -226,7 +226,7 @@ private fun NavItem(
     }
 }
 
-/** Vilka som är online: avatarer (och namn när menyn är utfälld). */
+/** Who is online: avatars (and names when the menu is expanded). */
 @Composable
 private fun Members(connected: Boolean, members: List<Member>, error: String?, expanded: Boolean, onClick: () -> Unit) {
     Surface(
@@ -259,8 +259,8 @@ private fun Members(connected: Boolean, members: List<Member>, error: String?, e
             Label(expanded) {
                 Text(
                     when {
-                        !connected -> error ?: t("Ansluter…", "Connecting…")
-                        members.isEmpty() -> t("Ansluten", "Connected")
+                        !connected -> error ?: tr("Connecting…")
+                        members.isEmpty() -> tr("Connected")
                         else -> viewersText(members)
                     },
                     fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 14.dp),

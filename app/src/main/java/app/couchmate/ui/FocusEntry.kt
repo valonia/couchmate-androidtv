@@ -1,6 +1,6 @@
 @file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 
-package se.synctv.ui
+package app.couchmate.ui
 
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.lazy.LazyListState
@@ -20,17 +20,16 @@ import androidx.compose.ui.focus.onFocusChanged
 import kotlinx.coroutines.delay
 
 /**
- * Vilken lista som hade fokus senast (namnet), sparat för hela menyskärmen.
- * När man kommer tillbaka från spelaren får den listan fokus igen, på samma rad.
- * null = fokus var i menyn till vänster.
+ * Which list had focus last (its name), kept for the whole menu screen.
+ * Coming back from the player gives that list focus again, on the same row.
+ * null = focus was in the menu on the left.
  */
 val LocalFocusMemory = staticCompositionLocalOf<MutableState<String?>?> { null }
 
 /**
- * Bestämmer var fokus hamnar när man går in i en lista från sidan (t.ex. från menyn), och
- * återställer fokus när man kommer tillbaka från spelaren.
- * Utan detta väljer Compose raden som ligger närmast i höjd – ofta flera rader ner.
- * Objekten identifieras med index eller med listans nycklar (key), beroende på hur den skapades.
+ * Decides where focus lands when entering a list from the side (e.g. from the menu), and restores focus
+ * when coming back from the player. Without this Compose picks the row closest in height – often several rows down.
+ * Items are identified by index or by the list's keys, depending on how it was built.
  */
 class FocusEntry(
     private val name: String,
@@ -40,14 +39,14 @@ class FocusEntry(
 ) {
     private val requesters = HashMap<Any, FocusRequester>()
 
-    /** Senast fokuserade objekt i listan (sparas även när skärmen lämnas). */
+    /** The last focused item in the list (kept even when the screen is left). */
     var last: Any?
         get() = store.value?.let { if (it.startsWith("i:")) it.drop(2).toIntOrNull() else it.drop(2) }
         set(v) { store.value = when (v) { is Int -> "i:$v"; is String -> "s:$v"; else -> null } }
 
     fun requester(id: Any): FocusRequester = requesters.getOrPut(id) { FocusRequester() }
 
-    /** Sätts på varje objekt i listan (id = index eller nyckel). */
+    /** Put on every item in the list (id = index or key). */
     fun item(id: Any): Modifier = Modifier
         .focusRequester(requester(id))
         .onFocusChanged {
@@ -63,15 +62,15 @@ class FocusEntry(
         return requester(pick)
     }
 
-    /** Hade den här listan fokus när skärmen lämnades (t.ex. för spelaren)? */
+    /** Did this list have focus when the screen was left (e.g. for the player)? */
     val shouldRestore get() = memory?.value == name && last != null
 
-    /** Ge fokus till raden man var på (väntar tills raden har laddats och ritats). */
+    /** Gives focus to the row you were on (waits until it has loaded and been drawn). */
     suspend fun restore() {
         val id = last ?: return
         repeat(30) {
             delay(100)
-            if (memory?.value != name) return // man har hunnit gå någon annanstans
+            if (memory?.value != name) return // you have gone somewhere else meanwhile
             if (runCatching { requester(id).requestFocus() }.isSuccess && id in visible()) return
         }
     }
@@ -86,12 +85,12 @@ private fun rememberEntry(name: String, autoRestore: Boolean = true, visible: ()
     return entry
 }
 
-/** Objekten identifieras med sitt index. */
+/** Items identified by index. */
 @Composable
 fun rememberFocusEntry(state: LazyListState, name: String): FocusEntry =
     rememberEntry(name) { state.layoutInfo.visibleItemsInfo.filter { it.offset >= 0 }.map { it.index } }
 
-/** Objekten identifieras med sin nyckel (key) – för listor med blandade rader. */
+/** Items identified by key – for lists with mixed rows. */
 @Composable
 fun rememberFocusEntryByKey(state: LazyListState, name: String, autoRestore: Boolean = true): FocusEntry =
     rememberEntry(name, autoRestore) { state.layoutInfo.visibleItemsInfo.filter { it.offset >= 0 }.map { it.key } }
@@ -100,6 +99,6 @@ fun rememberFocusEntryByKey(state: LazyListState, name: String, autoRestore: Boo
 fun rememberFocusEntry(state: LazyGridState, name: String): FocusEntry =
     rememberEntry(name) { state.layoutInfo.visibleItemsInfo.filter { it.offset.y >= 0 }.map { it.index } }
 
-/** Sätts på listan: när fokus kommer utifrån går det till [wanted] (första som syns), annars översta raden. */
+/** Put on the list: focus coming from outside goes to [wanted] (the first that is visible), otherwise the top row. */
 fun Modifier.focusEntry(entry: FocusEntry, wanted: () -> Array<Any?> = { arrayOf(entry.last) }): Modifier =
     this.focusProperties { enter = { entry.target(*wanted()) } }.focusGroup()

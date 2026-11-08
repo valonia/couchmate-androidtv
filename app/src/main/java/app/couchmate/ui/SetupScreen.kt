@@ -1,6 +1,6 @@
 @file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
 
-package se.synctv.ui
+package app.couchmate.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -59,15 +59,17 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import se.synctv.Api
-import se.synctv.I18n
-import se.synctv.Prefs
-import se.synctv.normalizeUrl
-import se.synctv.t
+import androidx.compose.ui.platform.LocalContext
+import app.couchmate.APP_NAME
+import app.couchmate.Api
+import app.couchmate.I18n
+import app.couchmate.Prefs
+import app.couchmate.normalizeUrl
+import app.couchmate.tr
 
 /**
- * Inställningar: server, PIN, namn och språk.
- * [onCancel] = null första gången (inget att gå tillbaka till), annars tar Bakåt/Avbryt dig till menyn.
+ * Settings: server, PIN, name and language.
+ * [onCancel] = null the first time (nothing to go back to); otherwise Back/Cancel takes you to the menu.
  */
 @Composable
 fun SetupScreen(prefs: Prefs, onDone: () -> Unit, onCancel: (() -> Unit)? = null) {
@@ -79,10 +81,11 @@ fun SetupScreen(prefs: Prefs, onDone: () -> Unit, onCancel: (() -> Unit)? = null
     var testing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val firstFocus = remember { FocusRequester() }
+    val context = LocalContext.current
 
     BackHandler(enabled = onCancel != null) { onCancel?.invoke() }
 
-    // Börja på "Spara" om allt redan är ifyllt (så att tangentbordet inte hoppar upp), annars på serveradressen.
+    // Start on "Save" if everything is filled in (so the keyboard does not pop up), otherwise on the server address.
     LaunchedEffect(Unit) { delay(120); runCatching { firstFocus.requestFocus() } }
 
     fun save() {
@@ -91,13 +94,16 @@ fun SetupScreen(prefs: Prefs, onDone: () -> Unit, onCancel: (() -> Unit)? = null
         scope.launch {
             val url = normalizeUrl(server)
             try {
-                Api(url, pin.trim()).categories("live")
+                val api = Api(url, pin.trim())
+                val info = api.info()
+                if (!info.ready) throw Exception(tr("The server is not set up yet. Set a PIN code in the admin panel."))
+                api.auth()
                 prefs.serverUrl = url
                 prefs.pin = pin.trim()
                 prefs.name = name.trim()
                 onDone()
             } catch (e: Exception) {
-                status = t("Kunde inte ansluta: ${e.message}", "Couldn't connect: ${e.message}")
+                status = tr("Could not connect: {message}", "message" to e.message)
             } finally {
                 testing = false
             }
@@ -108,20 +114,17 @@ fun SetupScreen(prefs: Prefs, onDone: () -> Unit, onCancel: (() -> Unit)? = null
         Modifier.fillMaxSize().background(Palette.Bg).padding(horizontal = 56.dp, vertical = 44.dp),
         horizontalArrangement = Arrangement.spacedBy(48.dp),
     ) {
-        // ---------------------------------------------------------- vänster: logga + status
+        // ---------------------------------------------------------- left: logo + status
         Column(Modifier.width(300.dp).fillMaxHeight()) {
             Row {
                 Text("Couch", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = Palette.Text)
-                Text("mates", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = Palette.Accent)
+                Text("mate", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = Palette.Accent)
             }
             Spacer(Modifier.height(6.dp))
-            Text(t("Inställningar", "Settings"), fontSize = 20.sp, color = Palette.Dim)
+            Text(tr("Settings"), fontSize = 20.sp, color = Palette.Dim)
             Spacer(Modifier.height(28.dp))
             Text(
-                t(
-                    "Titta på samma kanal, film eller serie som dina vänner, helt i synk. Alla som ansluter till samma server hamnar i samma rum.",
-                    "Watch the same channel, movie or series as your friends, perfectly in sync. Everyone connected to the same server ends up in the same room.",
-                ),
+                tr("Watch together with your friends, perfectly in sync. Everyone connected to the same server ends up in the same room."),
                 fontSize = 15.sp, color = Palette.Dim, lineHeight = 22.sp,
             )
             Spacer(Modifier.weight(1f))
@@ -133,17 +136,17 @@ fun SetupScreen(prefs: Prefs, onDone: () -> Unit, onCancel: (() -> Unit)? = null
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(8.dp).background(Color(0xFF3DD68C), CircleShape))
                         Spacer(Modifier.width(8.dp))
-                        Text(t("Sparad server", "Saved server"), fontSize = 13.sp, color = Palette.Faint, fontWeight = FontWeight.Bold)
+                        Text(tr("Saved server"), fontSize = 13.sp, color = Palette.Faint, fontWeight = FontWeight.Bold)
                     }
                     Text(prefs.serverUrl.removePrefix("http://").removePrefix("https://"), fontSize = 15.sp, color = Palette.Text)
-                    Text(t("Inloggad som ${prefs.name}", "Signed in as ${prefs.name}"), fontSize = 14.sp, color = Palette.Dim)
+                    Text(tr("Signed in as {name}", "name" to prefs.name), fontSize = 14.sp, color = Palette.Dim)
                 }
                 Spacer(Modifier.height(12.dp))
-                Text(t("Tillbaka  –  till menyn utan att spara", "Back  –  return to the menu without saving"), fontSize = 13.sp, color = Palette.Faint)
+                Text(tr("Back  –  return to the menu without saving"), fontSize = 13.sp, color = Palette.Faint)
             }
         }
 
-        // ---------------------------------------------------------- höger: formuläret
+        // ---------------------------------------------------------- right: the form
         Column(
             Modifier
                 .weight(1f)
@@ -154,33 +157,33 @@ fun SetupScreen(prefs: Prefs, onDone: () -> Unit, onCancel: (() -> Unit)? = null
             verticalArrangement = Arrangement.spacedBy(30.dp),
         ) {
             SettingsSection(
-                t("Anslutning", "Connection"),
-                t("Adressen till er Couchmates-server och PIN-koden ni fått.", "The address of your Couchmates server and the PIN you were given."),
+                tr("Connection"),
+                tr("The address of your {app} server and the PIN code you were given.", "app" to APP_NAME),
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     Field(
-                        t("Serveradress", "Server address"), server, t("t.ex. 192.168.1.10:8787", "e.g. 192.168.1.10:8787"),
+                        tr("Server address"), server, tr("e.g. 192.168.1.10:8787"),
                         KeyboardType.Uri, Modifier.weight(2f).then(if (!prefs.isConfigured) Modifier.focusRequester(firstFocus) else Modifier),
                     ) { server = it }
-                    Field(t("PIN-kod", "PIN code"), pin, "••••", KeyboardType.Password, Modifier.weight(1f), password = true) { pin = it }
+                    Field(tr("PIN code"), pin, "••••", KeyboardType.Password, Modifier.weight(1f), password = true) { pin = it }
                 }
             }
 
-            SettingsSection(t("Profil", "Profile"), t("Namnet som de andra ser när du är med.", "The name the others see when you join.")) {
-                Field(t("Ditt namn", "Your name"), name, t("t.ex. Bob", "e.g. Bob"), KeyboardType.Text, Modifier.fillMaxWidth(0.6f)) { name = it }
+            SettingsSection(tr("Profile"), tr("The name the others see when you join.")) {
+                Field(tr("Your name"), name, tr("e.g. Bob"), KeyboardType.Text, Modifier.fillMaxWidth(0.6f)) { name = it }
             }
 
-            SettingsSection(t("Språk", "Language"), t("Gäller direkt och bara på den här TV:n.", "Applies right away and only on this TV.")) {
+            SettingsSection(tr("Language"), tr("Menus and buttons in the TV's language, translated by the server. Applies only on this TV.")) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    val system = java.util.Locale.getDefault().let { it.getDisplayLanguage(it).replaceFirstChar { c -> c.uppercase(it) } }
                     listOf(
-                        "auto" to t("Automatiskt (som TV:n)", "Automatic (same as TV)"),
-                        "sv" to "Svenska",
+                        "auto" to tr("Same as the TV ({language})", "language" to system),
                         "en" to "English",
                     ).forEach { (code, label) ->
                         Pill(label, selected = language == code, onClick = {
                             language = code
                             prefs.language = code
-                            I18n.set(code)
+                            I18n.configure(context, code)
                         })
                     }
                 }
@@ -189,13 +192,13 @@ fun SetupScreen(prefs: Prefs, onDone: () -> Unit, onCancel: (() -> Unit)? = null
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     ActionButton(
-                        text = if (testing) t("Ansluter…", "Connecting…") else if (prefs.isConfigured) t("Spara", "Save") else t("Anslut", "Connect"),
+                        text = if (testing) tr("Connecting…") else if (prefs.isConfigured) tr("Save") else tr("Connect"),
                         primary = true,
                         enabled = !testing && server.isNotBlank() && name.isNotBlank(),
                         onClick = { save() },
                         modifier = if (prefs.isConfigured) Modifier.focusRequester(firstFocus) else Modifier,
                     )
-                    onCancel?.let { ActionButton(t("Avbryt", "Cancel"), primary = false, onClick = it) }
+                    onCancel?.let { ActionButton(tr("Cancel"), primary = false, onClick = it) }
                 }
                 status?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 15.sp) }
             }
@@ -267,7 +270,7 @@ private fun Field(
             modifier = Modifier
                 .fillMaxWidth()
                 .onFocusChanged { focused = it.isFocused }
-                // Upp/ner/vänster/höger på fjärren flyttar mellan fälten (annars fastnar man i textfältet).
+                // Up/down/left/right on the remote move between the fields (otherwise you get stuck in the text field).
                 .onPreviewKeyEvent { ev ->
                     if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     when (ev.key) {

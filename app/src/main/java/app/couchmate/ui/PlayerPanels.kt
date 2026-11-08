@@ -1,9 +1,9 @@
 @file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
 
-package se.synctv.ui
+package app.couchmate.ui
 
-import se.synctv.t
-import se.synctv.I18n
+import app.couchmate.I18n
+import app.couchmate.tr
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,10 +42,10 @@ import androidx.media3.common.Tracks
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
-import se.synctv.Prefs
+import app.couchmate.Prefs
 import java.util.Locale
 
-/** Ett val i panelen (undertext eller ljudspår). */
+/** A choice in the settings panel (a subtitle, an audio track, a quality …). */
 data class TrackOption(val label: String, val selected: Boolean, val action: Boolean = false, val apply: () -> Unit)
 
 
@@ -77,7 +77,7 @@ private fun trackLabel(f: Format, index: Int, type: Int): String {
     val name = f.label?.takeIf { it.isNotBlank() }
     val base = listOfNotNull(name, lang?.takeIf { name == null || !name.contains(it, ignoreCase = true) })
         .joinToString(" · ")
-        .ifEmpty { t("Spår ${index + 1}", "Track ${index + 1}") }
+        .ifEmpty { tr("Track {n}", "n" to index + 1) }
     val extra = mutableListOf<String>()
     if (type == C.TRACK_TYPE_AUDIO) {
         codecName(f.sampleMimeType)?.let(extra::add)
@@ -88,25 +88,24 @@ private fun trackLabel(f: Format, index: Int, type: Int): String {
             8 -> extra += "7.1"
         }
     } else {
-        if (isForced(f)) extra += t("tvingad", "forced")
-        // Undertexter tolkas i förväg till "media3-cues" – originalformatet ligger då i codecs.
+        if (isForced(f)) extra += tr("forced")
+        // Subtitles are parsed in advance into "media3-cues" – the original format is then in codecs.
         codecName(if (f.sampleMimeType == MimeTypes.APPLICATION_MEDIA3_CUES) f.codecs else f.sampleMimeType)?.let(extra::add)
     }
     return if (extra.isEmpty()) base else "$base   ${extra.joinToString(" · ")}"
 }
 
-/** Forced-undertexter visar bara text när någon pratar ett annat språk. */
+/** Forced subtitles only show text when someone speaks another language. */
 private fun isForced(f: Format) =
     f.selectionFlags and C.SELECTION_FLAG_FORCED != 0 ||
-        f.label?.contains("forced", ignoreCase = true) == true ||
-        f.label?.contains("tvingad", ignoreCase = true) == true
+        f.label?.contains("forced", ignoreCase = true) == true
 
-/** Sparat val: "sv" = fullständiga svenska, "sv:forced" = svenska forced, "off" = av, "" = filens standard. */
+/** Saved choice: "sv" = full Swedish, "sv:forced" = Swedish forced, "off" = off, "" = the file's default. */
 private fun subPref(f: Format) = (f.language ?: "") + if (isForced(f)) ":forced" else ""
 
 /**
- * Väljer undertext enligt sparat val när en ny video öppnas.
- * Föredrar samma språk OCH samma typ (fullständig/forced) som man valde senast.
+ * Picks the subtitle from the saved choice when a new video opens.
+ * Prefers the same language AND the same type (full/forced) as last time.
  */
 fun autoSelectSubtitle(player: ExoPlayer, tracks: Tracks, prefs: Prefs) {
     val pref = prefs.subLang
@@ -123,7 +122,7 @@ fun autoSelectSubtitle(player: ExoPlayer, tracks: Tracks, prefs: Prefs) {
         .build()
 }
 
-/** Undertextval: t("Av", "Off") + alla undertexter som spelaren klarar. */
+/** Subtitle choices: Off + every subtitle the player can show. */
 fun subtitleOptions(player: ExoPlayer, tracks: Tracks, prefs: Prefs): List<TrackOption> {
     val disabled = player.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)
     val list = mutableListOf<TrackOption>()
@@ -135,7 +134,7 @@ fun subtitleOptions(player: ExoPlayer, tracks: Tracks, prefs: Prefs): List<Track
             val f = g.getTrackFormat(i)
             val selected = !disabled && g.isTrackSelected(i)
             anySelected = anySelected || selected
-            // Numrera spår med samma namn, t.ex. två svenska: "Svenska", "Svenska (2)".
+            // Number tracks with the same name, e.g. two Swedish: "Swedish", "Swedish (2)".
             var label = trackLabel(f, list.size, C.TRACK_TYPE_TEXT)
             val same = list.count { it.label == label || it.label.startsWith("$label (") }
             if (same > 0) label = "$label (${same + 1})"
@@ -149,7 +148,7 @@ fun subtitleOptions(player: ExoPlayer, tracks: Tracks, prefs: Prefs): List<Track
             }
         }
     }
-    list.add(0, TrackOption(t("Av", "Off"), !anySelected) {
+    list.add(0, TrackOption(tr("Off"), !anySelected) {
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
@@ -159,7 +158,7 @@ fun subtitleOptions(player: ExoPlayer, tracks: Tracks, prefs: Prefs): List<Track
     return list
 }
 
-/** Ljudspår som spelaren klarar. */
+/** Audio tracks the player can play. */
 fun audioOptions(player: ExoPlayer, tracks: Tracks, prefs: Prefs): List<TrackOption> {
     val list = mutableListOf<TrackOption>()
     for (g in tracks.groups) {
@@ -179,7 +178,7 @@ fun audioOptions(player: ExoPlayer, tracks: Tracks, prefs: Prefs): List<TrackOpt
     return list
 }
 
-/** Använd sparade val (språk) när något nytt startar. */
+/** Applies the saved choices (languages) when something new starts. */
 fun applyTrackPrefs(player: ExoPlayer, prefs: Prefs) {
     val b = player.trackSelectionParameters.buildUpon()
     when (val s = prefs.subLang) {
@@ -191,41 +190,7 @@ fun applyTrackPrefs(player: ExoPlayer, prefs: Prefs) {
     player.trackSelectionParameters = b.build()
 }
 
-/** Panel från höger: välj undertext och ljudspår (gäller bara den här TV:n). */
-@Composable
-fun TrackPanel(subs: List<TrackOption>, audio: List<TrackOption>, onClose: () -> Unit) {
-    val firstFocus = remember { FocusRequester() }
-    val focusIdx = subs.indexOfFirst { it.selected }.coerceAtLeast(0)
-    LaunchedEffect(Unit) { delay(80); runCatching { firstFocus.requestFocus() } }
-
-    Row(Modifier.fillMaxSize()) {
-        Box(Modifier.weight(1f).fillMaxHeight().background(Color(0x33000000)))
-        Column(
-            Modifier.width(560.dp).fillMaxHeight().closeOnBack(onClose)
-                .background(Brush.horizontalGradient(listOf(Color(0xE60A0C10), Color(0xF50A0C10))))
-                .padding(start = 24.dp, end = 32.dp, top = 32.dp, bottom = 24.dp),
-        ) {
-            Text(t("Ljud & undertext", "Audio & subtitles"), fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 14.dp))
-            Text(t("Gäller bara den här TV:n", "Only affects this TV"), fontSize = 14.sp, color = Palette.Faint, modifier = Modifier.padding(start = 14.dp, top = 2.dp, bottom = 14.dp))
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                item { Header(t("Undertext", "Subtitles")) }
-                itemsIndexed(subs) { idx, opt ->
-                    OptionRow(opt, if (idx == focusIdx) Modifier.focusRequester(firstFocus) else Modifier)
-                }
-                if (subs.size == 1) item {
-                    Text(t("Den här videon har inga undertexter", "This video has no subtitles"), fontSize = 14.sp, color = Palette.Faint, modifier = Modifier.padding(start = 14.dp, top = 4.dp))
-                }
-                item { Spacer(Modifier.height(18.dp)); Header(t("Ljud", "Audio")) }
-                if (audio.isEmpty()) item {
-                    Text(t("Inga ljudspår att välja", "No audio tracks to choose from"), fontSize = 14.sp, color = Palette.Faint, modifier = Modifier.padding(start = 14.dp))
-                }
-                itemsIndexed(audio) { _, opt -> OptionRow(opt, Modifier) }
-            }
-        }
-    }
-}
-
-/** Kvaliteter i strömmen (videovarianter), störst först, plus "Automatisk". Sparas för nästa ström. */
+/** The stream's qualities (video variants), largest first, plus "Automatic". Kept for the next stream. */
 fun qualityOptions(player: ExoPlayer, tracks: Tracks, prefs: Prefs): List<TrackOption> {
     val formats = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
         .flatMap { g -> (0 until g.length).filter { g.isTrackSupported(it) }.map { g.getTrackFormat(it) } }
@@ -233,13 +198,13 @@ fun qualityOptions(player: ExoPlayer, tracks: Tracks, prefs: Prefs): List<TrackO
         .distinctBy { it.height }
         .sortedByDescending { it.height }
     val chosen = prefs.streamHeight
-    val list = mutableListOf(TrackOption(t("Automatisk", "Automatic"), chosen == 0 || formats.none { it.height == chosen }) {
+    val list = mutableListOf(TrackOption(tr("Automatic"), chosen == 0 || formats.none { it.height == chosen }) {
         prefs.streamHeight = 0
         applyStreamQuality(player, prefs, true)
     })
     formats.forEachIndexed { i, f ->
         val fps = if (f.frameRate >= 49f) "${Math.round(f.frameRate)}" else ""
-        val label = "${f.height}p$fps" + if (i == 0) t("  (original)", "  (source)") else ""
+        val label = "${f.height}p$fps" + if (i == 0) "  (" + tr("source") + ")" else ""
         list += TrackOption(label, f.height == chosen) {
             prefs.streamHeight = f.height
             applyStreamQuality(player, prefs, true)
@@ -248,7 +213,7 @@ fun qualityOptions(player: ExoPlayer, tracks: Tracks, prefs: Prefs): List<TrackO
     return list
 }
 
-/** Lås livestreamens kvalitet till vald höjd (bara för strömmar, inte TV-kanaler eller filmer). */
+/** Locks a stream's quality to the chosen height (only where the plugin offers a quality choice). */
 fun applyStreamQuality(player: ExoPlayer, prefs: Prefs, isStream: Boolean) {
     val h = if (isStream) prefs.streamHeight else 0
     val b = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO)
@@ -257,11 +222,11 @@ fun applyStreamQuality(player: ExoPlayer, prefs: Prefs, isStream: Boolean) {
     player.trackSelectionParameters = b.build()
 }
 
-/** Panel från höger för livestreams: kvalitet och chatt (gäller bara den här TV:n). */
+/** The player's settings panel from the right: the boxes the plugin chose (this TV only). */
 @Composable
-fun StreamPanel(sections: List<Pair<String, List<TrackOption>>>, onClose: () -> Unit) {
+fun SettingsPanel(sections: List<Pair<String, List<TrackOption>>>, onClose: () -> Unit) {
     val firstFocus = remember { FocusRequester() }
-    // Fokus på det valda i första rutan (eller dess första rad).
+    // Focus on the chosen option in the first box (or its first row).
     val focusIdx = sections.firstOrNull()?.second?.indexOfFirst { it.selected }?.coerceAtLeast(0) ?: 0
     LaunchedEffect(Unit) { delay(80); runCatching { firstFocus.requestFocus() } }
 
@@ -272,8 +237,8 @@ fun StreamPanel(sections: List<Pair<String, List<TrackOption>>>, onClose: () -> 
                 .background(Color(0xFF0A0C10))
                 .padding(start = 24.dp, end = 32.dp, top = 32.dp, bottom = 24.dp),
         ) {
-            Text(t("Inställningar", "Settings"), fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 14.dp))
-            Text(t("Gäller bara den här TV:n", "Only affects this TV"), fontSize = 14.sp, color = Palette.Faint, modifier = Modifier.padding(start = 14.dp, top = 2.dp, bottom = 14.dp))
+            Text(tr("Settings"), fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 14.dp))
+            Text(tr("Only affects this TV"), fontSize = 14.sp, color = Palette.Faint, modifier = Modifier.padding(start = 14.dp, top = 2.dp, bottom = 14.dp))
             LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 sections.forEachIndexed { si, (title, options) ->
                     if (si > 0) item { Spacer(Modifier.height(18.dp)) }
@@ -283,14 +248,14 @@ fun StreamPanel(sections: List<Pair<String, List<TrackOption>>>, onClose: () -> 
                     }
                 }
                 if (sections.isEmpty()) item {
-                    Text(t("Inga inställningar för den här strömmen", "No settings for this stream"), fontSize = 14.sp, color = Palette.Faint, modifier = Modifier.padding(start = 14.dp))
+                    Text(tr("No settings for this video"), fontSize = 14.sp, color = Palette.Faint, modifier = Modifier.padding(start = 14.dp))
                 }
             }
         }
     }
 }
 
-/** Tillbaka stänger panelen direkt (annars tar första trycket bara bort fokus). */
+/** Back closes the panel straight away (otherwise the first press only removes focus). */
 private fun Modifier.closeOnBack(onClose: () -> Unit) = onPreviewKeyEvent {
     if (it.key != Key.Back) return@onPreviewKeyEvent false
     if (it.type == KeyEventType.KeyUp) onClose()
@@ -300,7 +265,7 @@ private fun Modifier.closeOnBack(onClose: () -> Unit) = onPreviewKeyEvent {
 @Composable
 private fun Header(text: String) {
     Text(
-        text.uppercase(), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Palette.Faint, letterSpacing = 1.5.sp,
+        text.uppercase(I18n.locale), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Palette.Faint, letterSpacing = 1.5.sp,
         modifier = Modifier.padding(start = 14.dp, bottom = 6.dp),
     )
 }

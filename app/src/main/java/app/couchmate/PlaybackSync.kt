@@ -1,4 +1,4 @@
-package se.synctv
+package app.couchmate
 
 import android.os.SystemClock
 import androidx.compose.runtime.getValue
@@ -6,15 +6,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import kotlin.math.abs
 
 /**
- * Styr ExoPlayer så att den följer rummets tillstånd.
- * Anropas var 250:e ms. Små avvikelser rättas med uppspelningshastighet (±8 %),
- * stora med en spolning (med adaptivt försprång för att kompensera buffringstid).
+ * Makes ExoPlayer follow the room's state. Called every 250 ms. Small differences are corrected with the
+ * playback speed (±8 %), large ones with a seek (with an adaptive lead to make up for buffering time).
  */
 class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) {
     var active = true
@@ -25,7 +25,7 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
 
     private var loadedUrl: String? = null
 
-    /** Adressen som spelas (för plugin-källor med egna val i inställningarna). */
+    /** The address that is played (plugins' own player choices are added to it). */
     var urlFor: (Media) -> String = { it.url }
     private var seekedVersion = -1
     private var readyVersion = -1
@@ -35,7 +35,7 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
     private var livePaused = false
     private var seekLead = 1.0
     private var leadCheck = false
-    private var rateWorks: Boolean? = null // null = vet inte än
+    private var rateWorks: Boolean? = null // null = not known yet
     private var correctStartAt = 0L
     private var correctStartDrift = 0.0
     private var lastFineSeekAt = 0L
@@ -68,7 +68,7 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
                 player.clearMediaItems()
                 loadedUrl = null
             }
-            status = t("Inget spelas", "Nothing playing")
+            status = tr("Nothing playing")
             return
         }
 
@@ -82,9 +82,10 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
             leadCheck = false
             rateWorks = null
             setRate(1f, force = true)
+            hls = media.type == "hls"
             load(url)
-            if (!media.isLive) {
-                // Går man med mitt i en film startar man direkt där de andra är.
+            if (!media.live) {
+                // Joining in the middle of a movie starts right where the others are.
                 val start = if (st.paused || sync.serverNow() < st.refTime) st.position
                 else st.position + (sync.serverNow() - st.refTime) / 1000.0 + seekLead
                 player.seekTo(ms(start))
@@ -94,15 +95,15 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
         }
 
         if (player.playerError != null) {
-            status = t("Uppspelningsfel ($lastError) – försöker igen…", "Playback error ($lastError) – retrying…")
+            status = tr("Playback error ({error}) – retrying…", "error" to lastError)
             if (now - errorAt > 3000) {
                 errorAt = now
-                if (media.isLive) load(url) else player.prepare()
+                if (media.live) load(url) else player.prepare()
             }
             return
         }
 
-        if (media.isLive) tickLive(st) else tickVod(st, now)
+        if (media.live) tickLive(st) else tickVod(st, now)
     }
 
     private fun tickLive(st: RoomState) {
@@ -110,16 +111,16 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
         if (st.paused) {
             player.playWhenReady = false
             livePaused = true
-            status = t("Pausad", "Paused")
+            status = tr("Paused")
             return
         }
         if (livePaused) {
-            // Hoppa tillbaka till live-läget när någon trycker play igen.
+            // Jump back to live when someone presses play again.
             livePaused = false
             load(urlFor(st.media!!))
         }
         player.playWhenReady = true
-        status = if (player.playbackState == Player.STATE_BUFFERING) t("Buffrar…", "Buffering…") else ""
+        status = if (player.playbackState == Player.STATE_BUFFERING) tr("Buffering…") else ""
     }
 
     private fun tickVod(st: RoomState, now: Long) {
@@ -138,33 +139,33 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
                 return
             }
             if (st.waiting) {
-                status = t("Väntar på att alla ska bli redo…", "Waiting for everyone to be ready…")
+                status = tr("Waiting for everyone to be ready…")
                 if (readyVersion != st.version && player.playbackState == Player.STATE_READY && now - lastSeekAt > 300) {
                     sync.ready(st.version, durationSec())
                     readyVersion = st.version
                 }
             } else {
-                status = t("Pausad", "Paused")
+                status = tr("Paused")
             }
             return
         }
 
         val serverNow = sync.serverNow()
         if (serverNow < st.refTime) {
-            // Alla startar exakt på refTime.
+            // Everyone starts exactly at refTime.
             player.playWhenReady = false
             if (abs(pos - st.position) > 0.5 && now - lastSeekAt > 1000) {
                 player.seekTo(ms(st.position))
                 lastSeekAt = now
             }
-            status = t("Startar…", "Starting…")
+            status = tr("Starting…")
             return
         }
 
         val target = st.position + (serverNow - st.refTime) / 1000.0
         player.playWhenReady = true
         if (player.playbackState == Player.STATE_BUFFERING) {
-            status = t("Buffrar…", "Buffering…")
+            status = tr("Buffering…")
             return
         }
         if (now < cooldownUntil) return
@@ -172,17 +173,17 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
         val d = pos - target
         drift = d
         if (leadCheck) {
-            // Lär oss hur lång tid en spolning tar så nästa hamnar rätt direkt.
+            // Learn how long a seek takes so the next one lands right away.
             seekLead = (seekLead - d * 0.7).coerceIn(0.3, 6.0)
             leadCheck = false
         }
         val dur = durationSec()
         if (dur > 0 && target > dur) {
-            status = t("Slut", "Ended")
+            status = tr("Ended")
             return
         }
-        // Fungerar hastighetsjusteringen? Med t.ex. AC3/Dolby som skickas vidare oavkodat (passthrough)
-        // går hastigheten inte att ändra – då rättar vi med små exakta hopp i stället.
+        // Does changing the speed work? With e.g. AC3/Dolby passed through undecoded the speed cannot change –
+        // then we correct with small exact jumps instead.
         if (correcting && rateWorks == null && now - correctStartAt > 5000) {
             rateWorks = abs(d) < abs(correctStartDrift) - 0.1
         }
@@ -196,7 +197,7 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
                 lastSeekAt = now
                 cooldownUntil = now + 2500
                 leadCheck = true
-                status = t("Synkar…", "Syncing…")
+                status = tr("Syncing…")
             }
             rateWorks != false && (abs(d) > 0.3 || (correcting && abs(d) > 0.06)) -> {
                 if (!correcting) {
@@ -215,8 +216,12 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
         }
     }
 
+    /** Whether the media that plays is HLS (told by the server; the address has no file extension). */
+    private var hls = false
+
     private fun load(url: String) {
-        player.setMediaItem(MediaItem.fromUri(url))
+        val item = MediaItem.Builder().setUri(url).apply { if (hls) setMimeType(MimeTypes.APPLICATION_M3U8) }.build()
+        player.setMediaItem(item)
         player.prepare()
     }
 

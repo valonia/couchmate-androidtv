@@ -1,4 +1,4 @@
-package se.synctv
+package app.couchmate
 
 import android.os.Build
 import android.os.Bundle
@@ -7,17 +7,19 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.Density
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -25,28 +27,29 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.SurfaceDefaults
 import androidx.tv.material3.darkColorScheme
-import se.synctv.ui.BrowseScreen
-import se.synctv.ui.PlayerScreen
-import se.synctv.ui.SetupScreen
+import app.couchmate.ui.BrowseScreen
+import app.couchmate.ui.LocalFocusMemory
+import app.couchmate.ui.PlayerScreen
+import app.couchmate.ui.SetupScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = Prefs(this)
-        I18n.set(prefs.language)
+        I18n.configure(this, prefs.language)
         setContent {
-            SyncTvTheme { App(prefs) }
+            CouchmateTheme { App(prefs) }
         }
     }
 }
 
-/** Storlek på hela gränssnittet (1.0 = original). Ändra här för att göra allt större/mindre. */
+/** Size of the whole interface (1.0 = original). Change it here to make everything bigger or smaller. */
 const val UI_SCALE = 0.8f
 
 @Composable
-fun SyncTvTheme(content: @Composable () -> Unit) {
+fun CouchmateTheme(content: @Composable () -> Unit) {
     val d = LocalDensity.current
-    // Skalar alla dp/sp på en gång – videon och undertexterna påverkas inte.
+    // Scales every dp/sp at once – the video and subtitles are not affected.
     CompositionLocalProvider(LocalDensity provides Density(d.density * UI_SCALE, d.fontScale)) {
         MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF7C9CFF))) {
             Surface(
@@ -60,10 +63,10 @@ fun SyncTvTheme(content: @Composable () -> Unit) {
 @Composable
 fun App(prefs: Prefs) {
     var configured by remember { mutableStateOf(prefs.isConfigured) }
-    // Vad som spelades senast vi tittade – så att vi inte hoppar in i spelaren igen när man kommer tillbaka från inställningarna.
+    // What played last time we watched – so we do not jump into the player again when coming back from Settings.
     var seenMedia by remember { mutableStateOf<String?>(null) }
     if (!configured) {
-        // Bakåt/Avbryt går tillbaka till menyn – utom första gången, då finns inget att gå tillbaka till.
+        // Back/Cancel returns to the menu – except the first time, when there is nothing to return to.
         SetupScreen(
             prefs,
             onDone = { configured = true },
@@ -76,11 +79,14 @@ fun App(prefs: Prefs) {
 
 @Composable
 fun Room(prefs: Prefs, seenMedia: String?, onSeen: (String?) -> Unit, onSettings: () -> Unit) {
-    val sync = remember { SyncClient(prefs.serverUrl, prefs.pin, prefs.name, Build.MODEL ?: "Android TV") }
     val api = remember { Api(prefs.serverUrl, prefs.pin) }
+    val sync = remember { SyncClient(api, prefs.serverUrl, prefs.pin, prefs.name, Build.MODEL ?: "Android TV") }
 
-    // Anslut när appen syns, koppla ner när den hamnar i bakgrunden
-    // (annars skulle servern vänta på en enhet som ingen tittar på).
+    // Translations of the app's own texts are fetched in the background while the app runs.
+    LaunchedEffect(api) { I18n.pump(api) }
+
+    // Connect while the app is visible, disconnect when it goes to the background
+    // (otherwise the server would wait for a device nobody watches).
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event ->
@@ -101,31 +107,31 @@ fun Room(prefs: Prefs, seenMedia: String?, onSeen: (String?) -> Unit, onSettings
     val mediaKey = state?.media?.key
     var inPlayer by remember { mutableStateOf(false) }
 
-    // När någon startar något nytt hoppar alla in i spelaren automatiskt.
+    // When someone starts something new, everyone jumps into the player.
     val hasState = state != null
     LaunchedEffect(mediaKey, hasState) {
-        if (!hasState) return@LaunchedEffect // vänta tills vi fått rummets status från servern
+        if (!hasState) return@LaunchedEffect // wait for the room's state from the server
         if (mediaKey == null) inPlayer = false
-        else if (mediaKey != seenMedia) inPlayer = true // något nytt startades (eller vi gick precis med)
+        else if (mediaKey != seenMedia) inPlayer = true // something new started (or we just joined)
         onSeen(mediaKey)
     }
-    // Startar man själv något som redan spelas (t.ex. "Titta nu" på kanalen som går) – hoppa in i spelaren ändå.
+    // Starting something that already plays (e.g. "Watch now" on the channel that is on) – go to the player anyway.
     var firstVersion by remember { mutableStateOf<Int?>(null) }
     LaunchedEffect(state?.version) {
         val st = state ?: return@LaunchedEffect
-        if (firstVersion == null) { firstVersion = st.version; return@LaunchedEffect } // första statusen efter anslutning räknas inte
+        if (firstVersion == null) { firstVersion = st.version; return@LaunchedEffect } // the first state after connecting does not count
         if (st.media != null && st.action == "load" && st.changedBy == prefs.name) inPlayer = true
     }
 
-    // Menyns läge (vald meny, grupp, serie, rad och scroll) sparas medan spelaren visas,
-    // så att man kommer tillbaka dit man var.
-    val saved = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+    // The menu's state (chosen entry, group, detail page, row and scroll) is kept while the player shows,
+    // so you come back to where you were.
+    val saved = rememberSaveableStateHolder()
     if (inPlayer && state?.media != null) {
         PlayerScreen(sync, api, onExit = { inPlayer = false })
     } else {
         saved.SaveableStateProvider("browse") {
-            val focusMemory = androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
-            androidx.compose.runtime.CompositionLocalProvider(se.synctv.ui.LocalFocusMemory provides focusMemory) {
+            val focusMemory = rememberSaveable { mutableStateOf<String?>(null) }
+            CompositionLocalProvider(LocalFocusMemory provides focusMemory) {
                 BrowseScreen(sync, api, onOpenPlayer = { inPlayer = true }, onSettings = onSettings)
             }
         }

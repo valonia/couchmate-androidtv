@@ -1,6 +1,6 @@
 @file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
 
-package se.synctv.ui
+package app.couchmate.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -37,66 +37,67 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
+import app.couchmate.Api
+import app.couchmate.I18n
+import app.couchmate.Item
+import app.couchmate.PendingReminder
+import app.couchmate.Program
+import app.couchmate.Reminder
+import app.couchmate.SyncClient
+import app.couchmate.reminderKey
+import app.couchmate.tr
 import kotlinx.coroutines.delay
-import se.synctv.Api
-import se.synctv.I18n
-import se.synctv.Item
-import se.synctv.PendingReminder
-import se.synctv.Program
-import se.synctv.Reminder
-import se.synctv.SyncClient
-import se.synctv.t
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 
-/** "Idag", "Imorgon" eller t.ex. "tisdag 10 november". */
+/** "Today", "Tomorrow" or e.g. "Tuesday 10 November" (in the TV's language). */
 fun dayLabel(start: Long): String {
     val d = Calendar.getInstance().apply { timeInMillis = start * 1000 }
     val today = Calendar.getInstance()
     val tomorrow = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 1) }
     fun same(a: Calendar, b: Calendar) = a.get(Calendar.YEAR) == b.get(Calendar.YEAR) && a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR)
     return when {
-        same(d, today) -> t("Idag", "Today")
-        same(d, tomorrow) -> t("Imorgon", "Tomorrow")
+        same(d, today) -> tr("Today")
+        same(d, tomorrow) -> tr("Tomorrow")
         else -> SimpleDateFormat("EEEE d MMMM", I18n.locale).format(Date(start * 1000))
     }
 }
 
 /**
- * Höger panel i TV-fliken: kanalens tablå (pågående och kommande program).
- * → på fjärren flyttar in i tablån; OK på ett kommande program = påminnelse för hela rummet.
+ * The right-hand panel next to a channel list: the channel's schedule (on now and coming up).
+ * → on the remote moves into the schedule; OK on a coming programme = a reminder for the whole room.
  */
 @Composable
-fun ChannelGuide(item: Item?, shortEpg: List<Program>?, now: Long, api: Api, sync: SyncClient, categoryName: String?, modifier: Modifier = Modifier, showHints: Boolean = true) {
+fun ChannelGuide(item: Item?, shortEpg: List<Program>?, now: Long, api: Api, sync: SyncClient, modifier: Modifier = Modifier, showHints: Boolean = true) {
     val reminders by sync.reminders.collectAsState()
-    var guide by remember(item?.id) { mutableStateOf<List<Program>?>(null) }
-    LaunchedEffect(item?.id) {
-        val id = item?.id ?: return@LaunchedEffect
-        delay(350) // vänta tills man slutat bläddra
-        guide = runCatching { api.guide(id) }.getOrNull()
+    var guide by remember(item?.key) { mutableStateOf<List<Program>?>(null) }
+    LaunchedEffect(item?.key) {
+        val it = item ?: return@LaunchedEffect
+        delay(350) // wait until browsing stops
+        guide = runCatching { api.guide(it.plugin, it.id) }.getOrNull()
     }
     Column(modifier.background(Palette.Panel, RoundedCornerShape(12.dp)).padding(start = 22.dp, end = 14.dp, top = 22.dp, bottom = 16.dp)) {
         if (item == null) return@Column
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Thumb(api.abs(item.icon), item.name, Modifier.width(120.dp).height(68.dp), corner = 8.dp)
+            Thumb(api.abs(item.image), item.title, Modifier.width(120.dp).height(68.dp), corner = 8.dp)
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    item.num?.let { Text("$it", color = Palette.Dim, fontSize = 16.sp); Spacer(Modifier.width(8.dp)) }
+                    item.number?.let { Text("$it", color = Palette.Dim, fontSize = 16.sp); Spacer(Modifier.width(8.dp)) }
                     LiveBadge()
                 }
-                Text(item.name, fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(item.title, fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
         Spacer(Modifier.height(14.dp))
         val programs = (guide ?: shortEpg ?: emptyList()).filter { it.end > now }
         if (programs.isEmpty()) {
-            Text(t("Ingen programinformation", "No programme information"), color = Palette.Faint, fontSize = 16.sp)
+            Text(tr("No programme information"), color = Palette.Faint, fontSize = 16.sp)
             Spacer(Modifier.weight(1f))
         } else {
-            // Dagrubriker mellan programmen
-            val entries = remember(programs) {
+            // Day headings between the programmes
+            val entries = remember(programs, I18n.lang) {
                 buildList<Any> {
                     var last: String? = null
                     for (p in programs) {
@@ -113,18 +114,17 @@ fun ChannelGuide(item: Item?, shortEpg: List<Program>?, now: Long, api: Api, syn
                             e.uppercase(I18n.locale), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Palette.Faint, letterSpacing = 1.sp,
                             modifier = Modifier.padding(start = 6.dp, top = 10.dp, bottom = 4.dp),
                         )
-                        is Program -> GuideRow(e, now, reminders.firstOrNull { it.key == se.synctv.reminderKey(item.id, e.start) }) {
-                            if (e.isNow(now)) sync.load("live", item.id, item.ext, item.name, categoryName, item.icon, item.categoryId)
-                            else sync.toggleReminder(item, e, categoryName)
+                        is Program -> GuideRow(e, now, reminders.firstOrNull { it.key == reminderKey(item.plugin, item.id, e.start) }) {
+                            if (e.isNow(now)) sync.load(item) else sync.toggleReminder(item, e)
                         }
                     }
                 }
             }
         }
         if (showHints) {
-        Spacer(Modifier.height(8.dp))
-        Text(t("→  tablå   ·   OK på ett program  –  påminnelse", "→  guide   ·   OK on a programme  –  reminder"), fontSize = 13.sp, color = Palette.Faint)
-        Text(t("OK på kanal  –  titta   ·   Håll inne OK  –  favorit", "OK on channel  –  watch   ·   Hold OK  –  favourite"), fontSize = 13.sp, color = Palette.Faint)
+            Spacer(Modifier.height(8.dp))
+            Text(tr("→  guide   ·   OK on a programme  –  reminder"), fontSize = 13.sp, color = Palette.Faint)
+            Text(tr("OK on a channel  –  watch   ·   Hold OK  –  favorite"), fontSize = 13.sp, color = Palette.Faint)
         }
     }
 }
@@ -146,7 +146,7 @@ private fun GuideRow(p: Program, now: Long, reminder: Reminder?, onClick: () -> 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (live) {
                     Text(
-                        t("PÅGÅR", "ON NOW"), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                        tr("ON NOW"), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White,
                         modifier = Modifier.background(Palette.Live, RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 1.dp),
                     )
                     Spacer(Modifier.width(8.dp))
@@ -156,10 +156,10 @@ private fun GuideRow(p: Program, now: Long, reminder: Reminder?, onClick: () -> 
             when {
                 live -> ProgressLine(p.progress(now), Modifier.fillMaxWidth().padding(top = 6.dp))
                 reminder != null -> Text(
-                    t("Påminnelse${reminder.addedBy?.let { " · av $it" } ?: ""}", "Reminder${reminder.addedBy?.let { " · by $it" } ?: ""}"),
+                    reminder.addedBy?.let { tr("Reminder · by {name}", "name" to it) } ?: tr("Reminder"),
                     fontSize = 12.sp, color = Palette.Gold, maxLines = 1,
                 )
-                p.desc != null -> Text(p.desc, fontSize = 12.sp, color = Palette.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                p.description != null -> Text(p.description, fontSize = 12.sp, color = Palette.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         if (!live) {
@@ -173,8 +173,8 @@ private fun GuideRow(p: Program, now: Long, reminder: Reminder?, onClick: () -> 
 }
 
 /**
- * "Påminnelse: X börjar 21:00 – byter kanal om 23 s". I spelaren styrs det med OK/Tillbaka;
- * i menyn får kortet egna knappar ([interactive]).
+ * "Reminder: X starts 21:00 – switching channel in 23 s". In the player it is controlled with OK/Back;
+ * in the menu the card has its own buttons ([interactive]).
  */
 @Composable
 fun ReminderCard(r: PendingReminder, secondsLeft: Long, interactive: Boolean, onNow: () -> Unit, onCancel: () -> Unit, modifier: Modifier = Modifier) {
@@ -190,20 +190,20 @@ fun ReminderCard(r: PendingReminder, secondsLeft: Long, interactive: Boolean, on
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Text(
-                t("PÅMINNELSE  ·  BYTER KANAL OM $secondsLeft S", "REMINDER  ·  SWITCHING CHANNEL IN $secondsLeft S"),
+                tr("REMINDER  ·  SWITCHING CHANNEL IN {n} S", "n" to secondsLeft),
                 fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Palette.Gold, letterSpacing = 1.sp,
             )
             Text(r.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
-            Text(t("Börjar ${hhmm(r.start)} på ${r.channelName}", "Starts ${hhmm(r.start)} on ${r.channelName}"), fontSize = 15.sp, color = Palette.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(tr("Starts {time} on {channel}", "time" to hhmm(r.start), "channel" to r.channelTitle), fontSize = 15.sp, color = Palette.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(10.dp))
             if (interactive) {
                 Row {
-                    Pill(t("Byt nu", "Switch now"), selected = true, onClick = onNow, modifier = Modifier.focusRequester(first))
+                    Pill(tr("Switch now"), selected = true, onClick = onNow, modifier = Modifier.focusRequester(first))
                     Spacer(Modifier.width(8.dp))
-                    Pill(t("Avbryt", "Cancel"), selected = false, onClick = onCancel)
+                    Pill(tr("Cancel"), selected = false, onClick = onCancel)
                 }
             } else {
-                Text(t("OK byt nu   ·   Tillbaka avbryt", "OK switch now   ·   Back cancel"), fontSize = 13.sp, color = Palette.Faint)
+                Text(tr("OK switch now   ·   Back cancel"), fontSize = 13.sp, color = Palette.Faint)
             }
         }
     }

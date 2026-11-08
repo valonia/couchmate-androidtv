@@ -1,8 +1,7 @@
 @file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
 
-package se.synctv.ui
+package app.couchmate.ui
 
-import se.synctv.t
 import android.os.SystemClock
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
@@ -51,11 +50,11 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -64,47 +63,53 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerView
-import androidx.media3.ui.CaptionStyleCompat
-import androidx.media3.ui.SubtitleView
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
-import se.synctv.Prefs
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.CaptionStyleCompat
+import androidx.media3.ui.PlayerView
+import androidx.media3.ui.SubtitleView
 import androidx.tv.material3.Text
+import app.couchmate.Api
+import app.couchmate.ChatMsg
+import app.couchmate.Item
+import app.couchmate.Media
+import app.couchmate.Member
+import app.couchmate.PlaybackSync
+import app.couchmate.PlayerSpec
+import app.couchmate.Prefs
+import app.couchmate.Program
+import app.couchmate.RoomState
+import app.couchmate.SpecSection
+import app.couchmate.SyncClient
+import app.couchmate.UpNext
+import app.couchmate.formatTime
+import app.couchmate.next
+import app.couchmate.now
+import app.couchmate.tr
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import se.synctv.Api
-import se.synctv.Item
-import se.synctv.Media
-import se.synctv.Member
-import se.synctv.PlaybackSync
-import se.synctv.Program
-import se.synctv.RoomState
-import se.synctv.SyncClient
-import se.synctv.formatTime
-import se.synctv.next
-import se.synctv.now
 
+/**
+ * The player. Everything plays in sync for the whole room (PlaybackSync). What the remote's buttons do,
+ * what is in the settings panel and which overlay shows are decided by the plugin (media.player).
+ */
 @OptIn(UnstableApi::class)
 @Composable
 fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
     val context = LocalContext.current
     val player = remember {
         ExoPlayer.Builder(context)
-            .setAudioAttributes(
-                AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),
-                true,
-            )
+            .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
             .build()
     }
     val controller = remember { PlaybackSync(player, sync) }
     val prefs = remember { Prefs(context) }
 
-    // Ljud/undertext: spåren följs så att panelen uppdateras direkt när man väljer.
+    // Audio/subtitles: the tracks are followed so the panel updates straight away when you choose.
     var tracks by remember { mutableStateOf(player.currentTracks) }
     val autoPicked = remember { mutableSetOf<String>() }
     DisposableEffect(player) {
@@ -112,7 +117,7 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
         val listener = object : Player.Listener {
             override fun onTracksChanged(t: Tracks) {
                 tracks = t
-                // En gång per video: välj undertext enligt det man valde senast.
+                // Once per video: pick the subtitle you chose last time.
                 val uri = player.currentMediaItem?.localConfiguration?.uri?.toString()
                 if (uri != null && uri !in autoPicked && t.groups.any { it.type == C.TRACK_TYPE_TEXT }) {
                     autoPicked += uri
@@ -151,7 +156,7 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
         onDispose { lifecycle.removeObserver(observer) }
     }
 
-    // Synk-loop (+ positionsrapport varannan sekund)
+    // The sync loop (+ a position report every other second)
     LaunchedEffect(Unit) {
         var n = 0
         while (isActive) {
@@ -161,7 +166,7 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
         }
     }
 
-    // Klocka för UI + när overlayn ska döljas
+    // A clock for the UI + when the overlay hides
     var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
     var overlayUntil by remember { mutableLongStateOf(SystemClock.elapsedRealtime() + 6000) }
     LaunchedEffect(Unit) {
@@ -172,44 +177,51 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
         if (state?.action in setOf("load", "play", "pause", "seek")) poke()
     }
 
-    // ---- kanaldata (för live): kanaler i samma grupp + EPG
+    // ---- what the plugin decided about the player
     val media = state?.media
-    var channels by remember { mutableStateOf<List<Item>>(emptyList()) }
-    var epg by remember { mutableStateOf<Map<String, List<Program>>>(emptyMap()) }
-    // Livestream från en källa (t.ex. Twitch): egen overlay, kvalitet och chatt i stället för kanallista/undertext.
-    val stream = media?.type == "plugin"
+    val spec = media?.player ?: defaultSpec(media)
+    val live = media?.live == true
     var showChat by remember { mutableStateOf(prefs.chatOn) }
-    val chatVisible = stream && showChat && media?.chat == true
+    val chatVisible = media?.chat == true && showChat
     LaunchedEffect(chatVisible) { sync.setChat(chatVisible) }
-    LaunchedEffect(media?.key) { applyStreamQuality(player, prefs, stream) }
+    LaunchedEffect(media?.key) { applyStreamQuality(player, prefs, spec.settings.any { it.type == "quality" }) }
     fun toggleChat() { showChat = !showChat; prefs.chatOn = showChat }
-    // Pluginets egna val (type "choice") skickas med i strömadressen: ?opt.<id>=<värde>.
+    // The plugin's own choices (type "choice") go with the stream address: ?opt.<id>=<value>.
     var optVersion by remember { mutableStateOf(0) }
-    fun optValue(m: Media, s: se.synctv.SpecSection) = m.sourceId?.let { prefs.sourceOpt(it, s.id) }?.takeIf { v -> s.options.any { it.id == v } } ?: s.default
+    fun optValue(m: Media, s: SpecSection) = prefs.pluginOpt(m.plugin, s.id)?.takeIf { v -> s.options.any { it.id == v } } ?: s.default
     LaunchedEffect(Unit) {
         controller.urlFor = { m ->
             val choices = m.player?.settings?.filter { it.type == "choice" }.orEmpty()
-            if (m.type != "plugin" || choices.isEmpty()) m.url
+            if (choices.isEmpty()) m.url
             else m.url + (if ('?' in m.url) "&" else "?") + choices.joinToString("&") { s -> "opt.${s.id}=" + java.net.URLEncoder.encode(optValue(m, s) ?: "", "UTF-8") }
         }
     }
 
-    LaunchedEffect(media?.categoryId, media?.type) {
-        val cat = media?.categoryId
-        if (media?.type != "live" || cat == null) return@LaunchedEffect
-        channels = runCatching { api.items("live", cat) }.getOrDefault(emptyList())
+    // ---- channels to zap between, and what is on (when the plugin offers them)
+    var channels by remember { mutableStateOf<List<Item>>(emptyList()) }
+    var epg by remember { mutableStateOf<Map<String, List<Program>>>(emptyMap()) }
+    LaunchedEffect(media?.key, spec.channels) {
+        val m = media ?: return@LaunchedEffect
+        if (!spec.channels) { channels = emptyList(); return@LaunchedEffect }
+        // Zapping within the same list keeps it; a channel from elsewhere fetches its own list.
+        if (channels.none { it.key == m.key }) channels = runCatching { api.channels(m.plugin, m.id) }.getOrDefault(emptyList())
+    }
+    LaunchedEffect(media?.key, spec.guide, channels) {
+        val m = media ?: return@LaunchedEffect
+        if (!spec.guide) return@LaunchedEffect
+        val ids = (listOf(m.id) + channels.filter { it.plugin == m.plugin }.map { it.id }).distinct()
         while (isActive) {
-            epg = runCatching { api.epg(cat) }.getOrDefault(epg)
+            epg = runCatching { api.epg(m.plugin, ids) }.getOrDefault(epg)
             delay(3 * 60_000)
         }
     }
 
-    // Spolning: samla ihop knapptryck och skicka EN seek efter en kort paus.
+    // Seeking: gather key presses and send ONE seek after a short pause.
     var pendingSeek by remember { mutableStateOf<Double?>(null) }
     var seekJob by remember { mutableStateOf<Job?>(null) }
     fun nudge(delta: Double) {
         val m = sync.state.value?.media ?: return
-        if (m.isLive) return
+        if (m.live) return
         val dur = controller.durationSec()
         val start = pendingSeek ?: controller.positionSec()
         pendingSeek = (start + delta).coerceIn(0.0, if (dur > 0) dur - 1 else Double.MAX_VALUE)
@@ -224,44 +236,56 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
     }
 
     fun loadChannel(item: Item) {
-        val m = sync.state.value?.media ?: return
-        sync.load("live", item.id, item.ext, item.name, m.subtitle, item.icon, m.categoryId)
+        val m = sync.state.value?.media
+        sync.load(item.copy(subtitle = item.subtitle ?: m?.subtitle))
     }
 
     fun zap(dir: Int) {
         val m = sync.state.value?.media ?: return
-        if (m.type != "live" || channels.size < 2) return
-        val i = channels.indexOfFirst { it.id == m.id }
+        if (channels.size < 2) return
+        val i = channels.indexOfFirst { it.key == m.key }
         if (i < 0) return
         loadChannel(channels[(i + dir + channels.size) % channels.size])
     }
 
-    // ---- kanallista ovanpå videon
+    // ---- panels on top of the video
     var panelOpen by remember { mutableStateOf(false) }
-    var trackPanel by remember { mutableStateOf(false) }
-    var streamPanel by remember { mutableStateOf(false) }
+    var settingsPanel by remember { mutableStateOf(false) }
     val rootFocus = remember { FocusRequester() }
-    LaunchedEffect(panelOpen, trackPanel, streamPanel) {
-        if (!panelOpen && !trackPanel && !streamPanel) { delay(50); runCatching { rootFocus.requestFocus() } }
+    LaunchedEffect(panelOpen, settingsPanel) {
+        if (!panelOpen && !settingsPanel) { delay(50); runCatching { rootFocus.requestFocus() } }
     }
 
     BackHandler {
         when {
-            streamPanel -> streamPanel = false
-            trackPanel -> trackPanel = false
+            settingsPanel -> settingsPanel = false
             panelOpen -> panelOpen = false
-            state?.reminder != null -> sync.reminderCancel() // Tillbaka avbryter påminnelsen för alla
-            state?.upNext != null -> sync.nextCancel() // Tillbaka avbryter "nästa avsnitt" för alla
+            state?.reminder != null -> sync.reminderCancel() // Back cancels the reminder for everyone
+            state?.upNext != null -> sync.nextCancel() // Back cancels "next episode" for everyone
             else -> onExit()
         }
     }
 
+    /** What a key does, as the plugin decided. */
+    fun perform(action: String, firstPress: Boolean) {
+        when (action) {
+            "pause" -> if (firstPress) { sync.toggle(); poke() }
+            "settings" -> if (firstPress) settingsPanel = true
+            "chat" -> if (firstPress) { if (media?.chat == true) toggleChat() else poke() }
+            "channels" -> if (firstPress) { if (channels.isNotEmpty()) panelOpen = true else poke() }
+            "channel_up" -> if (firstPress) zap(-1)
+            "channel_down" -> if (firstPress) zap(1)
+            "seek_back" -> nudge(-10.0)
+            "seek_forward" -> nudge(10.0)
+            else -> poke()
+        }
+    }
+
     val st = state
-    val live = media?.type == "live" // TV-kanal: kanallista, tablå och kanalbyte
-    val anyPanel = panelOpen || trackPanel || streamPanel
+    val anyPanel = panelOpen || settingsPanel
     val showOverlay = !anyPanel && (now < overlayUntil || st?.paused == true || pendingSeek != null)
     val chatWidth = if (chatVisible) 400.dp else 0.dp
-    // Videoytan ritas inte alltid om när den blir större igen (chatten döljs) – be den göra om layouten.
+    // The video surface does not always redraw when it grows again (the chat hides) – ask it to lay out again.
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
     LaunchedEffect(chatVisible) {
         repeat(3) {
@@ -279,52 +303,31 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
             .fillMaxSize()
             .background(Color.Black)
             .onKeyEvent { ev ->
-                if (anyPanel) return@onKeyEvent false // panelerna sköter sig själva
+                if (anyPanel) return@onKeyEvent false // the panels handle themselves
                 if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false
                 val firstPress = ev.nativeKeyEvent.repeatCount == 0
-                // Livestream från en plugin-källa: pluginet bestämmer vad knapparna gör.
-                if (stream && sync.state.value?.reminder == null) {
-                    val k = when (ev.key) {
-                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> "ok"
-                        Key.DirectionUp -> "up"
-                        Key.DirectionDown -> "down"
-                        Key.DirectionLeft -> "left"
-                        Key.DirectionRight -> "right"
-                        else -> null
-                    }
-                    if (k != null) {
-                        if (firstPress) when (media?.player?.keys?.get(k) ?: defaultKey(k)) {
-                            "pause" -> { sync.toggle(); poke() }
-                            "settings" -> streamPanel = true
-                            "chat" -> if (media?.chat == true) toggleChat() else poke()
-                            else -> poke()
-                        }
-                        return@onKeyEvent true
-                    }
-                }
+                val cur = sync.state.value
                 when (ev.key) {
                     Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
-                        if (firstPress) {
-                            when {
-                                sync.state.value?.reminder != null -> sync.reminderNow() // OK = byt kanal nu
-                                sync.state.value?.upNext != null -> sync.nextNow() // OK = spela nästa avsnitt nu
-                                live -> panelOpen = true
-                                else -> { sync.toggle(); poke() }
-                            }
+                        when {
+                            cur?.reminder != null -> if (firstPress) sync.reminderNow() // OK = switch channel now
+                            cur?.upNext != null -> if (firstPress) sync.nextNow() // OK = play the next episode now
+                            else -> perform(spec.keys["ok"] ?: "pause", firstPress)
                         }
                         true
                     }
+                    Key.DirectionUp -> { perform(spec.keys["up"] ?: "info", firstPress); true }
+                    Key.DirectionDown -> { perform(spec.keys["down"] ?: "settings", firstPress); true }
+                    Key.DirectionLeft -> { perform(spec.keys["left"] ?: "none", firstPress); true }
+                    Key.DirectionRight -> { perform(spec.keys["right"] ?: "settings", firstPress); true }
                     Key.MediaPlayPause -> { if (firstPress) { sync.toggle(); poke() }; true }
                     Key.MediaPlay -> { sync.play(); poke(); true }
                     Key.MediaPause -> { sync.pause(); poke(); true }
-                    Key.DirectionLeft -> { if (live) panelOpen = true else nudge(-10.0); true }
-                    Key.DirectionRight -> { if (live) trackPanel = true else nudge(10.0); true }
                     Key.MediaRewind -> { nudge(-30.0); true }
                     Key.MediaFastForward -> { nudge(30.0); true }
-                    Key.DirectionUp, Key.ChannelUp -> { if (live && firstPress) zap(-1) else poke(); true }
-                    Key.DirectionDown -> { if (!firstPress) Unit else if (live) zap(1) else trackPanel = true; true }
-                    Key.ChannelDown -> { if (live && firstPress) zap(1); true }
-                    Key.Captions -> { trackPanel = true; true }
+                    Key.ChannelUp -> { if (firstPress && spec.channels) zap(-1); true }
+                    Key.ChannelDown -> { if (firstPress && spec.channels) zap(1); true }
+                    Key.Captions -> { settingsPanel = true; true }
                     else -> ev.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_INFO && run { poke(); true }
                 }
             }
@@ -340,7 +343,7 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
                     keepScreenOn = true
                     isFocusable = false
                     setShutterBackgroundColor(android.graphics.Color.BLACK)
-                    // Tydliga undertexter: vit text med svart kant.
+                    // Clear subtitles: white text with a black edge.
                     subtitleView?.apply {
                         setApplyEmbeddedStyles(true)
                         setStyle(CaptionStyleCompat(android.graphics.Color.WHITE, android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT, CaptionStyleCompat.EDGE_TYPE_OUTLINE, android.graphics.Color.BLACK, null))
@@ -356,7 +359,7 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
             ChatPanel(chatMsgs, Modifier.align(Alignment.CenterEnd).width(chatWidth).fillMaxHeight())
         }
 
-        // Status (buffrar/synkar) när overlayn är dold
+        // Status (buffering/syncing) while the overlay is hidden
         if (!showOverlay && !panelOpen && controller.status.isNotEmpty()) {
             StatusChip(controller.status, Modifier.align(Alignment.TopEnd).padding(top = 28.dp, end = 28.dp + chatWidth))
         }
@@ -366,16 +369,16 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
             modifier = Modifier.padding(end = chatWidth),
         ) {
             if (st != null && media != null) {
-                if (media.type == "plugin") {
-                    StreamOverlay(st, media, members, connected, controller.status, api, chatOn = chatVisible)
-                } else if (media.isLive) {
-                    LiveOverlay(st, media, epg[media.id], channels.firstOrNull { it.id == media.id }, members, connected, controller.status, api)
-                } else {
-                    VodOverlay(
+                val hints = keyHints(spec, media, chatVisible, channels.isNotEmpty())
+                when {
+                    live && spec.guide -> LiveOverlay(st, media, epg[media.id], channels.firstOrNull { it.key == media.key }, members, connected, controller.status, api, hints)
+                    live -> StreamOverlay(st, media, members, connected, controller.status, api, hints)
+                    else -> VodOverlay(
                         st, media, members, connected, controller.status,
                         position = pendingSeek ?: controller.positionSec(),
                         duration = controller.durationSec(),
                         seeking = pendingSeek != null,
+                        hints = hints,
                     )
                 }
             }
@@ -387,60 +390,50 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
             exit = slideOutHorizontally { -it } + fadeOut(),
         ) {
             ChannelPanel(
-                title = media?.subtitle ?: t("Kanaler", "Channels"),
+                title = media?.subtitle ?: tr("Channels"),
                 channels = channels,
                 epg = epg,
-                currentId = media?.id,
+                currentKey = media?.key,
                 api = api,
                 onPick = { loadChannel(it); panelOpen = false },
             )
         }
 
         AnimatedVisibility(
-            visible = trackPanel,
+            visible = settingsPanel,
             enter = slideInHorizontally { it } + fadeIn(),
             exit = slideOutHorizontally { it } + fadeOut(),
         ) {
-            TrackPanel(
-                subs = subtitleOptions(player, tracks, prefs),
-                audio = audioOptions(player, tracks, prefs),
-                onClose = { trackPanel = false },
-            )
-        }
-
-        AnimatedVisibility(
-            visible = streamPanel,
-            enter = slideInHorizontally { it } + fadeIn(),
-            exit = slideOutHorizontally { it } + fadeOut(),
-        ) {
-            // Rutorna som pluginet har valt, i dess ordning.
+            // The boxes the plugin chose, in its order. Reading optVersion redraws the panel when a choice changes.
             val m = media
-            val optRead = optVersion // läs så att panelen ritas om när ett val ändras
-            val sections = (m?.player?.settings ?: defaultSettings(m?.chat == true)).mapNotNull { s ->
-                when (s.type) {
-                    "quality" -> (s.title ?: t("Kvalitet", "Quality")) to qualityOptions(player, tracks, prefs)
-                    "chat" -> if (m?.chat == true) (s.title ?: t("Chatt", "Chat")) to listOf(
-                        TrackOption(t("Visa chatten", "Show chat"), showChat) { if (!showChat) toggleChat() },
-                        TrackOption(t("Dölj chatten", "Hide chat"), !showChat) { if (showChat) toggleChat() },
-                    ) else null
-                    "audio" -> audioOptions(player, tracks, prefs).takeIf { it.size > 1 }?.let { (s.title ?: t("Ljud", "Audio")) to it }
-                    "subtitles" -> subtitleOptions(player, tracks, prefs).takeIf { it.size > 1 }?.let { (s.title ?: t("Undertext", "Subtitles")) to it }
-                    "choice" -> if (m != null) (s.title ?: s.id) to s.options.map { o ->
-                        TrackOption(o.label, optValue(m, s) == o.id) {
-                            m.sourceId?.let { prefs.setSourceOpt(it, s.id, o.id) }
-                            optVersion++
+            @Suppress("UNUSED_VARIABLE") val version = optVersion
+            val sections = run {
+                spec.settings.mapNotNull { s ->
+                    when (s.type) {
+                        "quality" -> qualityOptions(player, tracks, prefs).takeIf { it.size > 1 }?.let { (s.title ?: tr("Quality")) to it }
+                        "chat" -> if (m?.chat == true) (s.title ?: tr("Chat")) to listOf(
+                            TrackOption(tr("Show the chat"), showChat) { if (!showChat) toggleChat() },
+                            TrackOption(tr("Hide the chat"), !showChat) { if (showChat) toggleChat() },
+                        ) else null
+                        "audio" -> audioOptions(player, tracks, prefs).takeIf { it.size > 1 }?.let { (s.title ?: tr("Audio")) to it }
+                        "subtitles" -> subtitleOptions(player, tracks, prefs).takeIf { it.size > 1 }?.let { (s.title ?: tr("Subtitles")) to it }
+                        "choice" -> if (m != null) (s.title ?: s.id) to s.options.map { o ->
+                            TrackOption(o.label, optValue(m, s) == o.id) {
+                                prefs.setPluginOpt(m.plugin, s.id, o.id)
+                                optVersion++
+                            }
+                        } else null
+                        "actions" -> (s.title ?: tr("Actions")) to s.options.map { o ->
+                            TrackOption(o.label, false, action = true) { sync.playerAction(o.id); settingsPanel = false }
                         }
-                    } else null
-                    "actions" -> (s.title ?: t("Åtgärder", "Actions")) to s.options.map { o ->
-                        TrackOption(o.label, false, action = true) { sync.sourceAction(o.id); streamPanel = false }
+                        else -> null
                     }
-                    else -> null
                 }
             }
-            StreamPanel(sections = sections, onClose = { streamPanel = false })
+            SettingsPanel(sections = sections, onClose = { settingsPanel = false })
         }
 
-        // Påminnelse: kanalen byts snart för alla
+        // A reminder: the channel switches for everyone soon
         val reminder = st?.reminder
         if (reminder != null && !anyPanel) {
             ReminderCard(
@@ -450,36 +443,63 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
             )
         }
 
-        // "Nästa avsnitt" när ett avsnitt tagit slut
+        // "Next episode" when an episode has ended
         val upNext = st?.upNext
         if (upNext != null && !anyPanel) {
             UpNextCard(upNext, secondsLeft = ((upNext.startsAt - sync.serverNow()) / 1000.0).coerceAtLeast(0.0), api = api,
                 modifier = Modifier.align(Alignment.BottomEnd).padding(48.dp))
         }
+        NoticeToast(sync, Modifier.align(Alignment.TopCenter).padding(top = 24.dp))
     }
 }
 
+/** When the plugin sent nothing: OK pause, ◀▶ seek (not live), ▼ settings, ▲ info. */
+private fun defaultSpec(media: Media?): PlayerSpec = PlayerSpec(
+    keys = mapOf(
+        "ok" to "pause", "up" to "info", "down" to "settings",
+        "left" to if (media?.live == true) (if (media.chat) "chat" else "none") else "seek_back",
+        "right" to if (media?.live == true) "settings" else "seek_forward",
+    ),
+    settings = listOfNotNull(
+        if (media?.chat == true) SpecSection("chat", "chat", null) else null,
+        SpecSection("quality", "quality", null), SpecSection("audio", "audio", null), SpecSection("subtitles", "subtitles", null),
+    ),
+    channels = false, guide = false,
+)
+
+/** The help line at the bottom, built from what the plugin's keys do, e.g. "OK  pause/play   ·   ▲▼  change channel". */
+private fun keyHints(spec: PlayerSpec, media: Media, chatOn: Boolean, hasChannels: Boolean): String {
+    val glyphs = listOf("ok" to "OK", "up" to "▲", "down" to "▼", "left" to "◀", "right" to "▶")
+    val merged = LinkedHashMap<String, MutableList<String>>()
+    for ((k, glyph) in glyphs) {
+        val label = when (spec.keys[k]) {
+            "pause" -> tr("pause/play")
+            "settings" -> tr("settings")
+            "chat" -> if (media.chat) (if (chatOn) tr("hide chat") else tr("show chat")) else null
+            "channels" -> if (hasChannels) tr("channel list") else null
+            "channel_up", "channel_down" -> if (hasChannels) tr("change channel") else null
+            "seek_back", "seek_forward" -> if (!media.live) tr("skip 10 s") else null
+            else -> null
+        } ?: continue
+        merged.getOrPut(label) { mutableListOf() } += glyph
+    }
+    return (merged.map { (label, keys) -> "${keys.joinToString("")}  $label" } + tr("Back  menu")).joinToString("   ·   ")
+}
+
 @Composable
-private fun UpNextCard(upNext: se.synctv.UpNext, secondsLeft: Double, api: Api, modifier: Modifier = Modifier) {
+private fun UpNextCard(upNext: UpNext, secondsLeft: Double, api: Api, modifier: Modifier = Modifier) {
     Row(
-        modifier
-            .width(560.dp)
-            .background(Color(0xF00A0C10), RoundedCornerShape(14.dp))
-            .padding(18.dp),
+        modifier.width(560.dp).background(Color(0xF00A0C10), RoundedCornerShape(14.dp)).padding(18.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Thumb(api.abs(upNext.icon), upNext.title, Modifier.width(150.dp).height(84.dp), fit = false, corner = 8.dp)
+        Thumb(api.abs(upNext.item.image), upNext.item.title, Modifier.width(150.dp).height(84.dp), fit = false, corner = 8.dp)
         Spacer(Modifier.width(18.dp))
         Column(Modifier.weight(1f)) {
-            Text(t("NÄSTA AVSNITT", "NEXT EPISODE"), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Palette.Accent, letterSpacing = 1.5.sp)
-            Text(upNext.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            upNext.subtitle?.let { Text(it, fontSize = 15.sp, color = Palette.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            Text(tr("UP NEXT"), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Palette.Accent, letterSpacing = 1.5.sp)
+            Text(upNext.item.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            upNext.item.subtitle?.let { Text(it, fontSize = 15.sp, color = Palette.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             Spacer(Modifier.height(8.dp))
-            Text(
-                t("Startar om ${secondsLeft.toInt() + 1} s   ·   OK spela nu   ·   Tillbaka avbryt",
-                    "Starts in ${secondsLeft.toInt() + 1} s   ·   OK play now   ·   Back cancel"),
-                fontSize = 13.sp, color = Palette.Faint,
-            )
+            Text(tr("Starts in {n} s   ·   OK play now   ·   Back cancel", "n" to secondsLeft.toInt() + 1), fontSize = 13.sp, color = Palette.Faint)
         }
     }
 }
@@ -494,15 +514,16 @@ private fun StatusChip(text: String, modifier: Modifier = Modifier) {
     )
 }
 
-private fun actionText(a: String?) = when (a) {
-    "load" -> t("startade", "started")
-    "play", "start" -> t("tryckte play", "pressed play")
-    "pause" -> t("pausade", "paused")
-    "seek" -> t("spolade", "skipped")
+/** "Bob paused" – who did what, for the top strip. */
+private fun actionText(who: String, a: String?) = when (a) {
+    "load" -> tr("{name} started", "name" to who)
+    "play", "start" -> tr("{name} pressed play", "name" to who)
+    "pause" -> tr("{name} paused", "name" to who)
+    "seek" -> tr("{name} skipped", "name" to who)
     else -> null
 }
 
-/** Övre remsan: vem gjorde vad + vilka som tittar + klocka. */
+/** The top strip: who did what + who is watching + the clock. */
 @Composable
 private fun TopStrip(st: RoomState, members: List<Member>, connected: Boolean) {
     Row(
@@ -512,12 +533,7 @@ private fun TopStrip(st: RoomState, members: List<Member>, connected: Boolean) {
             .padding(start = 56.dp, end = 56.dp, top = 32.dp, bottom = 60.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val who = st.changedBy
-        val what = actionText(st.action)
-        if (who != null && what != null) {
-            Text(who, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Palette.Text)
-            Text(" $what", fontSize = 17.sp, color = Palette.Dim)
-        }
+        st.changedBy?.let { actionText(it, st.action) }?.let { Text(it, fontSize = 17.sp, color = Palette.Dim) }
         Spacer(Modifier.weight(1f))
         ViewersChip(connected, members.filter { it.watching })
         Spacer(Modifier.width(20.dp))
@@ -525,51 +541,34 @@ private fun TopStrip(st: RoomState, members: List<Member>, connected: Boolean) {
     }
 }
 
-/** Standard när pluginet inte har bestämt något: OK paus, ▼/▶ inställningar, ◀ chatt. */
-private fun defaultKey(k: String) = when (k) { "ok" -> "pause"; "down", "right" -> "settings"; "left" -> "chat"; else -> "info" }
-
-private fun defaultSettings(chat: Boolean) = listOfNotNull(
-    if (chat) se.synctv.SpecSection("chat", "chat", null) else null,
-    se.synctv.SpecSection("quality", "quality", null),
-    se.synctv.SpecSection("audio", "audio", null),
-)
-
-/** Hjälptexten nederst, byggd från pluginets knappar. */
-private fun keyHints(media: Media, chatOn: Boolean): String {
-    val names = listOf("ok" to "OK", "up" to "▲", "down" to "▼", "left" to "◀", "right" to "▶")
-    val parts = names.mapNotNull { (k, glyph) ->
-        when (media.player?.keys?.get(k) ?: defaultKey(k)) {
-            "pause" -> "$glyph  " + t("paus/spela", "pause/play")
-            "settings" -> "$glyph  " + t("inställningar", "settings")
-            "chat" -> if (media.chat) "$glyph  " + (if (chatOn) t("dölj chatt", "hide chat") else t("visa chatt", "show chat")) else null
-            else -> null
+/** The bottom part of every overlay: gradient, content, then status + key hints. */
+@Composable
+private fun BottomPanel(status: String, hints: String, modifier: Modifier = Modifier, trailing: @Composable () -> Unit = {}, content: @Composable () -> Unit) {
+    Column(
+        modifier
+            .fillMaxWidth()
+            .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xF00A0C10))))
+            .padding(start = 56.dp, end = 56.dp, top = 80.dp, bottom = 40.dp),
+    ) {
+        content()
+        Spacer(Modifier.height(16.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (status.isNotEmpty()) Text(status, fontSize = 14.sp, color = Color(0xFF9FB4FF))
+            Spacer(Modifier.weight(1f))
+            Text(hints, fontSize = 13.sp, color = Palette.Faint)
+            trailing()
         }
     }
-    return (parts + t("Tillbaka  meny", "Back  menu")).joinToString("   ·   ")
 }
 
-/** Overlay för livestreams från källor (t.ex. Twitch): bild, titel, kanal och LIVE. */
+/** The overlay for live streams without a guide: picture, title, channel and LIVE. */
 @Composable
-private fun StreamOverlay(
-    st: RoomState,
-    media: Media,
-    members: List<Member>,
-    connected: Boolean,
-    status: String,
-    api: Api,
-    chatOn: Boolean,
-) {
+private fun StreamOverlay(st: RoomState, media: Media, members: List<Member>, connected: Boolean, status: String, api: Api, hints: String) {
     Box(Modifier.fillMaxSize()) {
         TopStrip(st, members, connected)
-        Column(
-            Modifier
-                .align(Alignment.BottomStart)
-                .fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xF00A0C10))))
-                .padding(start = 56.dp, end = 56.dp, top = 80.dp, bottom = 40.dp),
-        ) {
+        BottomPanel(status, hints, Modifier.align(Alignment.BottomStart)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Thumb(api.abs(media.icon), media.subtitle ?: media.title, Modifier.width(150.dp).height(84.dp), corner = 10.dp)
+                Thumb(api.abs(media.image), media.subtitle ?: media.title, Modifier.width(150.dp).height(84.dp), corner = 10.dp)
                 Spacer(Modifier.width(24.dp))
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -577,30 +576,24 @@ private fun StreamOverlay(
                         Spacer(Modifier.width(12.dp))
                         LiveBadge()
                     }
-                    Spacer(Modifier.height(6.dp))
-                    Text(media.title, fontSize = 18.sp, color = Palette.Dim, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    if (media.subtitle != null) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(media.title, fontSize = 18.sp, color = Palette.Dim, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
                 }
-            }
-            Spacer(Modifier.height(16.dp))
-            Row {
-                if (status.isNotEmpty()) Text(status, fontSize = 14.sp, color = Color(0xFF9FB4FF))
-                Spacer(Modifier.weight(1f))
-                Text(keyHints(media, chatOn), fontSize = 13.sp, color = Palette.Faint)
             }
         }
     }
 }
 
-/** Livechatten till höger om videon. Nyaste längst ner. */
+/** The live chat to the right of the video. Newest at the bottom. */
 @Composable
-private fun ChatPanel(messages: List<se.synctv.ChatMsg>, modifier: Modifier = Modifier) {
+private fun ChatPanel(messages: List<ChatMsg>, modifier: Modifier = Modifier) {
     Column(modifier.background(Color(0xFF0E1015)).padding(start = 18.dp, end = 18.dp, top = 22.dp, bottom = 16.dp)) {
-        Text(t("Chatt", "Chat"), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Palette.Dim)
+        Text(tr("Chat"), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Palette.Dim)
         Spacer(Modifier.height(10.dp))
-        if (messages.isEmpty()) {
-            Text(t("Väntar på meddelanden…", "Waiting for messages…"), fontSize = 14.sp, color = Palette.Faint)
-        }
-        // Nyaste meddelandet längst ner och alltid synligt.
+        if (messages.isEmpty()) Text(tr("Waiting for messages…"), fontSize = 14.sp, color = Palette.Faint)
+        // The newest message at the bottom and always visible.
         val listState = rememberLazyListState()
         LaunchedEffect(messages.lastOrNull()) { listState.scrollToItem(0) }
         LazyColumn(Modifier.weight(1f), state = listState, reverseLayout = true, verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom)) {
@@ -621,41 +614,27 @@ private fun ChatPanel(messages: List<se.synctv.ChatMsg>, modifier: Modifier = Mo
     }
 }
 
+/** The overlay for channels with a programme guide: number, name, what is on now and next. */
 @Composable
-private fun LiveOverlay(
-    st: RoomState,
-    media: Media,
-    epg: List<Program>?,
-    channel: Item?,
-    members: List<Member>,
-    connected: Boolean,
-    status: String,
-    api: Api,
-) {
+private fun LiveOverlay(st: RoomState, media: Media, epg: List<Program>?, channel: Item?, members: List<Member>, connected: Boolean, status: String, api: Api, hints: String) {
     val nowS = rememberNowSec(15_000)
     val cur = epg.now(nowS)
     val nxt = epg.next(nowS)
     Box(Modifier.fillMaxSize()) {
         TopStrip(st, members, connected)
-        Column(
-            Modifier
-                .align(Alignment.BottomStart)
-                .fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xF00A0C10))))
-                .padding(start = 56.dp, end = 56.dp, top = 80.dp, bottom = 40.dp),
-        ) {
+        BottomPanel(status, hints, Modifier.align(Alignment.BottomStart)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Thumb(api.abs(media.icon), media.title, Modifier.width(150.dp).height(84.dp), corner = 10.dp)
+                Thumb(api.abs(media.image), media.title, Modifier.width(150.dp).height(84.dp), corner = 10.dp)
                 Spacer(Modifier.width(24.dp))
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        channel?.num?.let { Text("$it", fontSize = 20.sp, color = Palette.Dim); Spacer(Modifier.width(12.dp)) }
+                        channel?.number?.let { Text("$it", fontSize = 20.sp, color = Palette.Dim); Spacer(Modifier.width(12.dp)) }
                         Text(media.title, fontSize = 26.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                         Spacer(Modifier.width(12.dp))
                         LiveBadge()
                     }
                     Spacer(Modifier.height(6.dp))
-                    Text(cur?.title ?: t("Ingen programinformation", "No programme information"), fontSize = 19.sp, color = if (cur != null) Palette.Text else Palette.Faint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(cur?.title ?: tr("No programme information"), fontSize = 19.sp, color = if (cur != null) Palette.Text else Palette.Faint, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (cur != null) {
                         Spacer(Modifier.height(10.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -666,38 +645,22 @@ private fun LiveOverlay(
                     }
                     if (nxt != null) {
                         Spacer(Modifier.height(8.dp))
-                        Text(t("Härnäst  ${hhmm(nxt.start)}  ${nxt.title}", "Up next  ${hhmm(nxt.start)}  ${nxt.title}"), fontSize = 15.sp, color = Palette.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(tr("Up next") + "  ${hhmm(nxt.start)}  ${nxt.title}", fontSize = 15.sp, color = Palette.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
-            }
-            Spacer(Modifier.height(16.dp))
-            Row {
-                if (status.isNotEmpty()) Text(status, fontSize = 14.sp, color = Color(0xFF9FB4FF))
-                Spacer(Modifier.weight(1f))
-                Text(t("OK  kanallista   ·   ▲▼  byt kanal   ·   ▶  ljud & undertext   ·   ⏯  paus   ·   Tillbaka  meny", "OK  channel list   ·   ▲▼  change channel   ·   ▶  audio & subtitles   ·   ⏯  pause   ·   Back  menu"), fontSize = 13.sp, color = Palette.Faint)
             }
         }
     }
 }
 
+/** The overlay for movies and episodes: title, progress, time left. */
 @Composable
-private fun VodOverlay(
-    st: RoomState,
-    media: Media,
-    members: List<Member>,
-    connected: Boolean,
-    status: String,
-    position: Double,
-    duration: Double,
-    seeking: Boolean,
-) {
+private fun VodOverlay(st: RoomState, media: Media, members: List<Member>, connected: Boolean, status: String, position: Double, duration: Double, seeking: Boolean, hints: String) {
     Box(Modifier.fillMaxSize()) {
         TopStrip(st, members, connected)
         if (st.paused && !st.waiting) {
             Text(
-                "❚❚",
-                fontSize = 64.sp,
-                color = Color(0xE6FFFFFF),
+                "❚❚", fontSize = 64.sp, color = Color(0xE6FFFFFF),
                 modifier = Modifier.align(Alignment.Center).background(Color(0x66000000), RoundedCornerShape(50)).padding(horizontal = 34.dp, vertical = 18.dp),
             )
         }
@@ -713,10 +676,7 @@ private fun VodOverlay(
             Spacer(Modifier.height(18.dp))
             val frac = if (duration > 0) (position / duration).toFloat() else 0f
             Box(Modifier.fillMaxWidth().height(6.dp).background(Color(0x33FFFFFF), RoundedCornerShape(3.dp))) {
-                Box(
-                    Modifier.fillMaxWidth(frac.coerceIn(0f, 1f)).height(6.dp)
-                        .background(if (seeking) Palette.Gold else Palette.Accent, RoundedCornerShape(3.dp))
-                )
+                Box(Modifier.fillMaxWidth(frac.coerceIn(0f, 1f)).height(6.dp).background(if (seeking) Palette.Gold else Palette.Accent, RoundedCornerShape(3.dp)))
             }
             Spacer(Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -726,7 +686,7 @@ private fun VodOverlay(
                     Text(status, fontSize = 14.sp, color = Color(0xFF9FB4FF))
                 }
                 Spacer(Modifier.weight(1f))
-                Text(t("OK  paus   ·   ◀▶  spola 10 s   ·   ▼  ljud & undertext   ·   Tillbaka  meny", "OK  pause   ·   ◀▶  skip 10 s   ·   ▼  audio & subtitles   ·   Back  menu"), fontSize = 13.sp, color = Palette.Faint)
+                Text(hints, fontSize = 13.sp, color = Palette.Faint)
                 Spacer(Modifier.width(24.dp))
                 Text(if (duration > 0) "-" + formatTime(duration - position) else "", fontSize = 16.sp, color = Palette.Dim)
             }
@@ -734,20 +694,13 @@ private fun VodOverlay(
     }
 }
 
-/** Kanallista som glider in från vänster ovanpå videon. */
+/** A channel list that slides in from the left on top of the video. */
 @Composable
-private fun ChannelPanel(
-    title: String,
-    channels: List<Item>,
-    epg: Map<String, List<Program>>,
-    currentId: String?,
-    api: Api,
-    onPick: (Item) -> Unit,
-) {
+private fun ChannelPanel(title: String, channels: List<Item>, epg: Map<String, List<Program>>, currentKey: String?, api: Api, onPick: (Item) -> Unit) {
     val nowS = rememberNowSec()
     val listState = rememberLazyListState()
     val currentFocus = remember { FocusRequester() }
-    val startIdx = channels.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
+    val startIdx = channels.indexOfFirst { it.key == currentKey }.coerceAtLeast(0)
     LaunchedEffect(channels.size) {
         if (channels.isEmpty()) return@LaunchedEffect
         listState.scrollToItem((startIdx - 3).coerceAtLeast(0))
@@ -766,16 +719,16 @@ private fun ChannelPanel(
                 Clock(20)
             }
             if (channels.isEmpty()) {
-                Text(t("Laddar kanaler…", "Loading channels…"), color = Palette.Dim, modifier = Modifier.padding(14.dp))
+                Text(tr("Loading channels…"), color = Palette.Dim, modifier = Modifier.padding(14.dp))
             } else {
                 LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    itemsIndexed(channels) { idx, item ->
+                    itemsIndexed(channels, key = { _, it -> it.key }) { idx, item ->
                         ChannelRow(
                             item = item,
                             epg = epg[item.id],
                             nowSec = nowS,
-                            playing = item.id == currentId,
-                            iconUrl = api.abs(item.icon),
+                            playing = item.key == currentKey,
+                            iconUrl = api.abs(item.image),
                             onClick = { onPick(item) },
                             modifier = if (idx == startIdx) Modifier.focusRequester(currentFocus) else Modifier,
                         )
@@ -783,7 +736,7 @@ private fun ChannelPanel(
                 }
             }
         }
-        // Resten av skärmen: svagt mörkad så videon syns
+        // The rest of the screen: slightly darkened so the video shows
         Box(Modifier.weight(1f).fillMaxHeight().background(Color(0x33000000)))
     }
 }

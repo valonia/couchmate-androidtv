@@ -1,8 +1,8 @@
 @file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
 
-package se.synctv.ui
+package app.couchmate.ui
 
-import se.synctv.t
+import app.couchmate.tr
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -47,16 +47,17 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil.compose.SubcomposeAsyncImage
 import kotlinx.coroutines.delay
-import se.synctv.Item
-import se.synctv.Member
-import se.synctv.Program
-import se.synctv.now
-import se.synctv.nowSec
+import app.couchmate.I18n
+import app.couchmate.Item
+import app.couchmate.Member
+import app.couchmate.Program
+import app.couchmate.now
+import app.couchmate.nowSec
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Färgpalett – mörk, kompakt IPTV-stil. */
+/** Colours – dark and compact. */
 object Palette {
     val Bg = Color(0xFF0A0C10)
     val Panel = Color(0xFF11141B)
@@ -71,10 +72,9 @@ object Palette {
     val Gold = Color(0xFFF5C451)
 }
 
-private val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
-fun hhmm(sec: Long): String = timeFmt.format(Date(sec * 1000))
+fun hhmm(sec: Long): String = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(sec * 1000))
 
-/** Fokuserbar rad: transparent i vila, accentfärgad när den har fokus. */
+/** A focusable row: transparent at rest, accent coloured when focused. */
 @Composable
 fun FocusRow(
     onClick: () -> Unit,
@@ -110,7 +110,7 @@ fun FocusRow(
     }
 }
 
-/** Liten "pill"-knapp (flikar, säsonger). */
+/** A small "pill" button (tabs, seasons). */
 @Composable
 fun Pill(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, onFocus: () -> Unit = {}) {
     Surface(
@@ -136,7 +136,7 @@ fun Pill(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifie
     }
 }
 
-/** Rund ikonknapp i menyraden (t.ex. sök, inställningar). Samma fokusstil som [Pill]. */
+/** A round icon button. Same focus style as [Pill]. */
 @Composable
 fun IconPill(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -163,7 +163,7 @@ fun IconPill(
     }
 }
 
-/** Bild med reservtext (initialer) om den saknas eller inte laddar. */
+/** An image with fallback text (initials) if it is missing or does not load. */
 @Composable
 fun Thumb(
     url: String?,
@@ -176,7 +176,7 @@ fun Thumb(
         modifier.clip(RoundedCornerShape(corner)).background(Palette.PanelHi),
         contentAlignment = Alignment.Center,
     ) {
-        // Logotyper (fit) får initialer, affischer får hela titeln – alltid centrerat.
+        // Logos (fit) get initials, posters get the whole title – always centred.
         val initials: @Composable () -> Unit = {
             Box(
                 Modifier.fillMaxSize().then(
@@ -236,7 +236,7 @@ fun LiveBadge() {
     )
 }
 
-/** Klocka som uppdateras själv. */
+/** A clock that updates itself. */
 @Composable
 fun Clock(fontSize: Int = 22) {
     var t by remember { mutableLongStateOf(nowSec()) }
@@ -244,7 +244,7 @@ fun Clock(fontSize: Int = 22) {
     Text(hhmm(t), fontSize = fontSize.sp, color = Palette.Text, fontWeight = FontWeight.Light, maxLines = 1, softWrap = false)
 }
 
-/** Sekundklocka för EPG-förlopp i listor. */
+/** Current time in seconds, for programme progress in lists. */
 @Composable
 fun rememberNowSec(periodMs: Long = 30_000): Long {
     var t by remember { mutableLongStateOf(nowSec()) }
@@ -254,7 +254,7 @@ fun rememberNowSec(periodMs: Long = 30_000): Long {
 
 @Composable
 fun ViewersChip(connected: Boolean, members: List<Member>, error: String? = null, onClick: (() -> Unit)? = null) {
-    // Kompakt oavsett antal: upp till tre avatarer + "Bob, Karin +13".
+    // Compact whatever the number: up to three avatars + "Bob, Karin +13".
     val content: @Composable (Color) -> Unit = { textColor ->
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 6.dp, end = 14.dp, top = 4.dp, bottom = 4.dp)) {
             if (!connected || members.isEmpty()) {
@@ -267,8 +267,8 @@ fun ViewersChip(connected: Boolean, members: List<Member>, error: String? = null
             Spacer(Modifier.width(8.dp))
             Text(
                 when {
-                    !connected -> error ?: t("Ansluter…", "Connecting…")
-                    members.isEmpty() -> t("Ansluten", "Connected")
+                    !connected -> error ?: tr("Connecting…")
+                    members.isEmpty() -> tr("Connected")
                     else -> viewersText(members)
                 },
                 fontSize = 14.sp,
@@ -305,10 +305,10 @@ private val avatarColors = listOf(
     Color(0xFF3D7BFF), Color(0xFFE5484D), Color(0xFF3DD68C), Color(0xFFF5C451), Color(0xFFB57BFF), Color(0xFF2EC4D6), Color(0xFFFF8A4C),
 )
 
-/** Rund avatar med initial, färg utifrån namnet (samma färg för samma person överallt). */
+/** A round avatar with an initial, coloured by the name (the same colour for the same person everywhere). */
 @Composable
 fun Avatar(name: String, size: Dp) {
-    // Samma uträkning som på webben och Apple TV (osignerad 32-bitars hash), så att samma namn får samma färg överallt.
+    // The same calculation everywhere (unsigned 32-bit hash), so a name gets the same colour on every device.
     val color = avatarColors[((name.lowercase().hashCode().toLong() and 0xffffffffL) % avatarColors.size).toInt()]
     Box(
         Modifier.size(size).background(Palette.Bg, CircleShape).padding(2.dp).background(color, CircleShape),
@@ -319,7 +319,7 @@ fun Avatar(name: String, size: Dp) {
 }
 
 
-/** En rad i kanallistan: nummer, logga, namn, aktuellt program och förlopp. */
+/** A row in a channel list: number, logo, name, the programme on now and its progress. */
 @Composable
 fun ChannelRow(
     item: Item,
@@ -336,17 +336,17 @@ fun ChannelRow(
     val prog = epg.now(nowSec)
     FocusRow(onClick = onClick, modifier = modifier, height = 64.dp, onFocus = onFocus, selected = playing, onLongClick = onLongClick) {
         Text(
-            item.num?.toString() ?: "",
+            item.number?.toString() ?: "",
             fontSize = 15.sp,
             color = Palette.Dim,
             modifier = Modifier.width(48.dp),
         )
-        Thumb(iconUrl, item.name, Modifier.width(64.dp).height(38.dp))
+        Thumb(iconUrl, item.title, Modifier.width(64.dp).height(38.dp))
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    item.name,
+                    item.title,
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
@@ -377,7 +377,7 @@ fun ChannelRow(
     }
 }
 
-/** Affisch i rutnätet för filmer/serier. */
+/** A poster in a grid (movies, series). */
 @Composable
 fun PosterCard(
     title: String,
@@ -416,7 +416,7 @@ fun PosterCard(
                 }
                 if (newCount > 0) {
                     Text(
-                        if (newCount == 1) t("NYTT", "NEW") else t("$newCount NYA", "$newCount NEW"),
+                        if (newCount == 1) tr("NEW") else tr("{n} NEW", "n" to newCount),
                         fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White,
                         modifier = Modifier.align(Alignment.TopEnd).padding(6.dp)
                             .background(Palette.Accent, RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
@@ -440,7 +440,7 @@ fun PosterCard(
 }
 
 
-/** "År · Genre · ★ 7.1" */
+/** "Year · Genre · ★ 7.1" */
 fun metaLine(year: String?, genre: String?, rating: Double?): String =
     listOfNotNull(
         year?.takeIf { it.isNotBlank() },
@@ -448,9 +448,9 @@ fun metaLine(year: String?, genre: String?, rating: Double?): String =
         rating?.takeIf { it > 0 }?.let { "★ %.1f".format(it) },
     ).joinToString("  ·  ")
 
-/** Rensar typiska IPTV-taggar ur titlar: "Film [PRE] [2018]" -> "Film". */
+/** Removes typical IPTV tags from titles: "Film [PRE] [2018]" -> "Film". */
 fun cleanTitle(name: String): String =
     name.replace(Regex("\\s*[\\[(][^\\])]*[\\])]"), "").replace(Regex("\\s{2,}"), " ").trim().ifEmpty { name }
 
-/** År ur titeln om metadata saknas: "Film [2018]" -> "2018". */
+/** The year from the title if there is no metadata: "Film [2018]" -> "2018". */
 fun yearFromTitle(name: String): String? = Regex("[\\[(]((?:19|20)\\d{2})[\\])]").find(name)?.groupValues?.get(1)

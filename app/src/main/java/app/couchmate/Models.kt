@@ -1,0 +1,289 @@
+package app.couchmate
+
+import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
+
+/** An entry in the menu: built in (favorites, history) or from a plugin. */
+data class MenuEntry(val core: String?, val plugin: String?, val id: String, val title: String, val icon: String?) {
+    val key get() = if (core != null) "core/$core" else "$plugin/$id"
+}
+
+/** Anything a plugin shows: a channel, movie, series, episode, stream … */
+data class Item(
+    val plugin: String,
+    val id: String,
+    val title: String,
+    val subtitle: String? = null,
+    val image: String? = null,
+    val backdrop: String? = null,
+    val description: String? = null,
+    val kind: String? = null,
+    /** "play" (default) or "open" (a detail page). */
+    val action: String = "play",
+    val live: Boolean = false,
+    val number: Int? = null,
+    val viewers: Int? = null,
+    val year: String? = null,
+    val genre: String? = null,
+    val rating: Double? = null,
+    val badge: String? = null,
+    val duration: Double? = null,
+    val favorite: Boolean = true,
+) {
+    val key get() = "$plugin:$id"
+    val opens get() = action == "open"
+}
+
+data class ItemRow(val id: String, val title: String?, val style: String, val items: List<Item>)
+data class Group(val id: String, val title: String)
+
+/** What a plugin shows behind a menu entry or an item. */
+sealed class Screen {
+    abstract val message: String?
+    data class Rows(override val message: String?, val rows: List<ItemRow>) : Screen()
+    data class Groups(override val message: String?, val style: String, val guide: Boolean, val groups: List<Group>, val initial: String?) : Screen()
+    data class Detail(override val message: String?, val item: Item?, val facts: List<String>, val seasons: List<ItemRow>) : Screen()
+    data class Message(override val message: String?, val text: String?) : Screen()
+}
+
+data class PluginResult(val plugin: String, val name: String, val sections: List<ItemRow>)
+
+data class Program(val title: String, val description: String?, val start: Long, val end: Long) {
+    fun isNow(nowSec: Long) = nowSec in start until end
+    fun progress(nowSec: Long) = if (end > start) ((nowSec - start).toFloat() / (end - start)).coerceIn(0f, 1f) else 0f
+}
+
+fun List<Program>?.now(nowSec: Long) = this?.firstOrNull { it.isNow(nowSec) }
+fun List<Program>?.next(nowSec: Long) = this?.firstOrNull { it.start > nowSec }
+fun nowSec() = System.currentTimeMillis() / 1000
+
+data class HistoryEntry(
+    val key: String,
+    val plugin: String,
+    val id: String,
+    val kind: String?,
+    val title: String,
+    val subtitle: String?,
+    val image: String?,
+    val live: Boolean,
+    val startedBy: String?,
+    val lastAt: Long,
+    val position: Double,
+    val duration: Double?,
+) {
+    val fraction get() = if (duration != null && duration > 0) (position / duration).toFloat().coerceIn(0f, 1f) else 0f
+    val finished get() = duration != null && duration > 0 && position >= duration * 0.95
+    /** Worth resuming: more than a minute in and not nearly finished. */
+    val resumable get() = !live && position > 60 && !finished
+    fun toItem() = Item(plugin, id, title, subtitle, image, kind = kind, live = live)
+}
+
+/** A favourite in the room. [newCount] new episodes since someone last looked, e.g. [newLabel] = "S03E05". */
+data class Favorite(
+    val key: String,
+    val plugin: String,
+    val id: String,
+    val kind: String?,
+    val title: String,
+    val subtitle: String?,
+    val image: String?,
+    val live: Boolean,
+    val action: String,
+    val addedBy: String?,
+    val newCount: Int,
+    val newLabel: String?,
+) {
+    fun toItem() = Item(plugin, id, title, subtitle, image, kind = kind, action = action, live = live)
+}
+
+/** "Switch to this channel when the programme starts" – shared by the room. */
+data class Reminder(
+    val key: String,
+    val plugin: String,
+    val channel: Item,
+    val title: String,
+    val desc: String?,
+    val start: Long,
+    val end: Long,
+    val addedBy: String?,
+)
+
+fun reminderKey(plugin: String, channelId: String, start: Long) = "$plugin:$channelId:$start"
+
+/**
+ * How the player looks and reacts, decided by the plugin.
+ * keys: what OK/▲/▼/◀/▶ do – pause, settings, chat, info, channels, channel_up, channel_down, seek_back, seek_forward, none.
+ * settings: the boxes in the settings panel (quality, chat, audio, subtitles, choice, actions).
+ * channels: the plugin lists channels to zap between. guide: it has programme info for the overlay.
+ */
+data class PlayerSpec(val keys: Map<String, String>, val settings: List<SpecSection>, val channels: Boolean, val guide: Boolean)
+data class SpecSection(val id: String, val type: String, val title: String?, val options: List<SpecOption> = emptyList(), val default: String? = null)
+data class SpecOption(val id: String, val label: String)
+
+data class Media(
+    val plugin: String,
+    val id: String,
+    val kind: String?,
+    val title: String,
+    val subtitle: String?,
+    val image: String?,
+    val live: Boolean,
+    val url: String,
+    /** "hls" or "file" – the address has no file extension, so the player needs to be told. */
+    val type: String,
+    val chat: Boolean,
+    val player: PlayerSpec?,
+) {
+    val key get() = "$plugin:$id"
+    fun toItem() = Item(plugin, id, title, subtitle, image, kind = kind, live = live)
+}
+
+/** "Next episode", starting by itself at [startsAt] (server clock, ms). */
+data class UpNext(val item: Item, val startsAt: Long)
+
+/** A reminder that is about to switch everyone at [switchAt] (server clock, ms). */
+data class PendingReminder(val key: String, val title: String, val start: Long, val channelTitle: String, val channelImage: String?, val switchAt: Long)
+
+data class RoomState(
+    val media: Media?,
+    val paused: Boolean,
+    val waiting: Boolean,
+    val position: Double,
+    val refTime: Long,
+    val version: Int,
+    val changedBy: String?,
+    val action: String?,
+    val upNext: UpNext? = null,
+    val reminder: PendingReminder? = null,
+)
+
+data class Member(val id: String, val name: String, val device: String, val watching: Boolean)
+
+/** A chat message from a live stream. */
+data class ChatMsg(val user: String, val color: String?, val text: String)
+
+// ---------------------------------------------------------------- JSON
+
+fun JSONObject.optStringOrNull(name: String): String? =
+    if (!has(name) || isNull(name)) null else optString(name).takeIf { it.isNotEmpty() }
+
+fun JSONObject.optIntOrNull(name: String): Int? = if (!has(name) || isNull(name)) null else optInt(name)
+fun JSONObject.optDoubleOrNull(name: String): Double? = if (!has(name) || isNull(name)) null else optDouble(name).takeIf { !it.isNaN() }
+
+inline fun <T> JSONArray?.mapObjects(fn: (JSONObject) -> T?): List<T> {
+    if (this == null) return emptyList()
+    val out = ArrayList<T>(length())
+    for (i in 0 until length()) optJSONObject(i)?.let(fn)?.let(out::add)
+    return out
+}
+
+fun parseItem(o: JSONObject, pluginFallback: String? = null): Item? {
+    val plugin = o.optStringOrNull("plugin") ?: pluginFallback ?: return null
+    val id = o.optStringOrNull("id") ?: return null
+    return Item(
+        plugin = plugin,
+        id = id,
+        title = o.optString("title").ifEmpty { id },
+        subtitle = o.optStringOrNull("subtitle"),
+        image = o.optStringOrNull("image"),
+        backdrop = o.optStringOrNull("backdrop"),
+        description = o.optStringOrNull("description"),
+        kind = o.optStringOrNull("kind"),
+        action = o.optStringOrNull("action") ?: "play",
+        live = o.optBoolean("live"),
+        number = o.optIntOrNull("number"),
+        viewers = o.optIntOrNull("viewers"),
+        year = o.optStringOrNull("year"),
+        genre = o.optStringOrNull("genre"),
+        rating = o.optDoubleOrNull("rating"),
+        badge = o.optStringOrNull("badge"),
+        duration = o.optDoubleOrNull("duration"),
+        favorite = o.optBoolean("favorite", true),
+    )
+}
+
+fun parseRows(a: JSONArray?, plugin: String? = null) = a.mapObjects { r ->
+    ItemRow(r.optString("id"), r.optStringOrNull("title"), r.optString("style").ifEmpty { "landscape" }, r.optJSONArray("items").mapObjects { parseItem(it, plugin) })
+}
+
+fun parseScreen(o: JSONObject, plugin: String): Screen {
+    val message = o.optStringOrNull("message")
+    return when (o.optString("type")) {
+        "rows" -> Screen.Rows(message, parseRows(o.optJSONArray("rows"), plugin))
+        "groups" -> Screen.Groups(
+            message, o.optString("style").ifEmpty { "posters" }, o.optBoolean("guide"),
+            o.optJSONArray("groups").mapObjects { g -> g.optStringOrNull("id")?.let { Group(it, g.optString("title")) } },
+            o.optStringOrNull("initial"),
+        )
+        "detail" -> Screen.Detail(
+            message, o.optJSONObject("item")?.let { parseItem(it, plugin) },
+            o.optJSONArray("facts")?.let { a -> List(a.length()) { a.optString(it) } }.orEmpty().filter { it.isNotBlank() },
+            parseRows(o.optJSONArray("seasons"), plugin),
+        )
+        else -> Screen.Message(message, o.optStringOrNull("text"))
+    }
+}
+
+fun parsePrograms(a: JSONArray?) = a.mapObjects { p ->
+    Program(p.optString("title"), p.optStringOrNull("description"), p.optLong("start"), p.optLong("end"))
+}
+
+// ---------------------------------------------------------------- formatting
+
+fun normalizeUrl(input: String): String {
+    var u = input.trim().trimEnd('/')
+    if (!u.startsWith("http://") && !u.startsWith("https://")) u = "http://$u"
+    return u
+}
+
+fun formatTime(sec: Double): String {
+    val s = sec.coerceAtLeast(0.0).toLong()
+    val h = s / 3600
+    val m = (s % 3600) / 60
+    val r = s % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, r) else "%d:%02d".format(m, r)
+}
+
+// ---------------------------------------------------------------- settings on this TV
+
+class Prefs(context: Context) {
+    private val sp = context.getSharedPreferences("couchmate", Context.MODE_PRIVATE)
+
+    var serverUrl: String
+        get() = sp.getString("server", "") ?: ""
+        set(v) = sp.edit().putString("server", v).apply()
+    var pin: String
+        get() = sp.getString("pin", "") ?: ""
+        set(v) = sp.edit().putString("pin", v).apply()
+    var name: String
+        get() = sp.getString("name", "") ?: ""
+        set(v) = sp.edit().putString("name", v).apply()
+
+    /** Chosen subtitle language ("off" = off, "" = the file's default) and audio language – this TV only. */
+    var subLang: String
+        get() = sp.getString("subLang", "") ?: ""
+        set(v) = sp.edit().putString("subLang", v).apply()
+    var audioLang: String
+        get() = sp.getString("audioLang", "") ?: ""
+        set(v) = sp.edit().putString("audioLang", v).apply()
+
+    /** Live streams: show the chat, and the chosen quality (height in pixels, 0 = automatic). */
+    var chatOn: Boolean
+        get() = sp.getBoolean("chatOn", false)
+        set(v) = sp.edit().putBoolean("chatOn", v).apply()
+    var streamHeight: Int
+        get() = sp.getInt("streamHeight", 0)
+        set(v) = sp.edit().putInt("streamHeight", v).apply()
+
+    /** A plugin's own player choices (type "choice"), per plugin and choice. */
+    fun pluginOpt(plugin: String, id: String): String? = sp.getString("opt.$plugin.$id", null)
+    fun setPluginOpt(plugin: String, id: String, value: String) = sp.edit().putString("opt.$plugin.$id", value).apply()
+
+    /** Language: "auto" (the TV's language) or "en". */
+    var language: String
+        get() = sp.getString("language", "auto") ?: "auto"
+        set(v) = sp.edit().putString("language", v).apply()
+
+    val isConfigured get() = serverUrl.isNotBlank() && name.isNotBlank()
+}
