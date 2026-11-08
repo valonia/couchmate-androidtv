@@ -109,6 +109,13 @@ fun Room(prefs: Prefs, seenMedia: String?, onSeen: (String?) -> Unit, onSettings
         else if (mediaKey != seenMedia) inPlayer = true // något nytt startades (eller vi gick precis med)
         onSeen(mediaKey)
     }
+    // Startar man själv något som redan spelas (t.ex. "Titta nu" på kanalen som går) – hoppa in i spelaren ändå.
+    var firstVersion by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(state?.version) {
+        val st = state ?: return@LaunchedEffect
+        if (firstVersion == null) { firstVersion = st.version; return@LaunchedEffect } // första statusen efter anslutning räknas inte
+        if (st.media != null && st.action == "load" && st.changedBy == prefs.name) inPlayer = true
+    }
 
     if (inPlayer && state?.media != null) {
         PlayerScreen(sync, api, onExit = { inPlayer = false })
