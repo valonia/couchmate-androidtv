@@ -2,6 +2,13 @@
 
 package se.synctv.ui
 
+import androidx.compose.material.icons.filled.Notifications
+import se.synctv.next
+import se.synctv.now
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
+import kotlinx.coroutines.delay
+import androidx.compose.runtime.LaunchedEffect
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -42,7 +49,19 @@ private fun Favorite.toItem() = Item(id = id, name = name, icon = icon, ext = ex
 @Composable
 fun FavoritesScreen(sync: SyncClient, api: Api) {
     val favorites by sync.favorites.collectAsState()
+    val reminders by sync.reminders.collectAsState()
     var series by remember { mutableStateOf<Item?>(null) }
+    // EPG (nu/nästa) för favoritkanalerna
+    val liveIds = favorites.filter { it.type == "live" }.map { it.id }
+    var epg by remember { mutableStateOf<Map<String, List<se.synctv.Program>>>(emptyMap()) }
+    LaunchedEffect(liveIds) {
+        if (liveIds.isEmpty()) return@LaunchedEffect
+        while (true) {
+            epg = runCatching { api.epgFor(liveIds) }.getOrDefault(epg)
+            delay(3 * 60_000)
+        }
+    }
+    val now = rememberNowSec()
     BackHandler(enabled = series != null) { series = null }
 
     val s = series
@@ -74,7 +93,7 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
             )
         }
 
-        if (favorites.isEmpty()) {
+        if (favorites.isEmpty() && reminders.isEmpty()) {
             Text(
                 t(
                     "Inga favoriter än. Håll inne OK på en serie, film eller kanal för att lägga till den. Kommer det nya avsnitt i en favoritserie markeras det här.",
@@ -86,6 +105,29 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
         }
 
         LazyColumn(contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+            if (reminders.isNotEmpty()) item {
+                FavSection(t("Påminnelser", "Reminders"), reminders.size) {
+                    items(reminders) { r ->
+                        FocusRow(
+                            onClick = { sync.load("live", r.channel.id, r.channel.ext.ifBlank { "ts" }, r.channel.name, r.channel.categoryName, r.channel.icon, r.channel.categoryId) },
+                            onLongClick = { sync.reminderRemove(r.key) },
+                            modifier = Modifier.width(380.dp).background(Palette.Panel, RoundedCornerShape(8.dp)),
+                            height = 84.dp,
+                        ) {
+                            androidx.tv.material3.Icon(
+                                androidx.compose.material.icons.Icons.Filled.Notifications, contentDescription = null,
+                                tint = Palette.Gold, modifier = Modifier.size(22.dp),
+                            )
+                            Spacer(Modifier.width(14.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("${dayLabel(r.start)} ${hhmm(r.start)}", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Palette.Gold)
+                                Text(r.title, fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(r.channel.name + (r.addedBy?.let { t(" · av $it", " · by $it") } ?: ""), fontSize = 13.sp, color = Palette.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            }
             if (seriesFavs.isNotEmpty()) item {
                 FavSection(t("Serier", "Series"), seriesFavs.size) {
                     items(seriesFavs) { f ->
@@ -124,14 +166,29 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
                         FocusRow(
                             onClick = { sync.load("live", f.id, f.ext.ifBlank { "ts" }, f.name, f.categoryName, f.icon, f.categoryId) },
                             onLongClick = { sync.favRemove(f.key) },
-                            modifier = Modifier.width(300.dp).background(Palette.Panel, RoundedCornerShape(8.dp)),
-                            height = 76.dp,
+                            modifier = Modifier.width(380.dp).background(Palette.Panel, RoundedCornerShape(8.dp)),
+                            height = 96.dp,
                         ) {
                             Thumb(api.abs(f.icon), f.name, Modifier.width(80.dp).height(46.dp))
                             Spacer(Modifier.width(14.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(f.name, fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                f.categoryName?.let { Text(it, fontSize = 13.sp, color = Palette.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                                val progs = epg[f.id]
+                                val cur = progs.now(now)
+                                val nxt = progs.next(now)
+                                if (progs == null) {
+                                    f.categoryName?.let { Text(it, fontSize = 13.sp, color = Palette.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                                } else {
+                                    Text(cur?.title ?: t("Ingen programinformation", "No programme information"), fontSize = 13.sp, color = Palette.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    if (cur != null) ProgressLine(cur.progress(now), Modifier.fillMaxWidth().padding(vertical = 4.dp))
+                                    if (nxt != null) {
+                                        val reminded = reminders.any { it.key == se.synctv.reminderKey(f.id, nxt.start) }
+                                        Text(
+                                            (if (reminded) "🔔 " else "") + "${hhmm(nxt.start)}  ${nxt.title}",
+                                            fontSize = 12.sp, color = if (reminded) Palette.Gold else Palette.Faint, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
                             }
                             Text("★", fontSize = 15.sp, color = Palette.Gold)
                         }

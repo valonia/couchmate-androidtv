@@ -1,4 +1,4 @@
-@file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.tv.material3.ExperimentalTvMaterial3Api::class)
 
 package se.synctv.ui
 
@@ -45,6 +45,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -147,7 +148,27 @@ fun BrowseScreen(sync: SyncClient, api: Api, onOpenPlayer: () -> Unit, onSetting
         }
     }
     if (showMembers) MembersPanel(members, state?.media?.title)
+
+    // Påminnelse: kanalen byts snart för alla
+    val reminder = state?.reminder
+    if (reminder != null && !showMembers) {
+        val tick = rememberTicker(reminder.key)
+        val left = remember(tick, reminder.switchAt) { ((reminder.switchAt - sync.serverNow() + 999) / 1000).coerceAtLeast(0) }
+        ReminderCard(
+            reminder, secondsLeft = left,
+            interactive = true, onNow = { sync.reminderNow() }, onCancel = { sync.reminderCancel() },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(36.dp),
+        )
     }
+    }
+}
+
+/** Värde som ändras varje halvsekund medan [key] är aktiv (för nedräkningar). */
+@Composable
+fun rememberTicker(key: Any?): Long {
+    var n by remember(key) { mutableStateOf(0L) }
+    LaunchedEffect(key) { while (true) { delay(500); n++ } }
+    return n
 }
 
 /** Lista över alla som är anslutna – öppnas från chippet uppe till höger. */
@@ -270,7 +291,7 @@ private fun LiveBrowser(sync: SyncClient, api: Api, playingId: String?) {
             when {
                 error != null -> Message(t("Fel: $error", "Error: $error"), error = true)
                 loading && items.isEmpty() -> Message(t("Laddar kanaler…", "Loading channels…"))
-                else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.focusRestorer()) {
                     items(items) { item ->
                         ChannelRow(
                             item = item,
@@ -289,52 +310,7 @@ private fun LiveBrowser(sync: SyncClient, api: Api, playingId: String?) {
         }
         Spacer(Modifier.width(14.dp))
 
-        ChannelInfo(focused, focused?.let { epg[it.id] }, now, api, Modifier.weight(1f).fillMaxHeight())
-    }
-}
-
-@Composable
-private fun ChannelInfo(item: Item?, epg: List<Program>?, now: Long, api: Api, modifier: Modifier) {
-    Column(modifier.background(Palette.Panel, RoundedCornerShape(12.dp)).padding(28.dp)) {
-        if (item == null) return@Column
-        Thumb(api.abs(item.icon), item.name, Modifier.width(176.dp).height(99.dp), corner = 10.dp)
-        Spacer(Modifier.height(18.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            item.num?.let { Text("$it", color = Palette.Dim, fontSize = 18.sp); Spacer(Modifier.width(10.dp)) }
-            LiveBadge()
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(item.name, fontSize = 24.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Spacer(Modifier.height(22.dp))
-
-        val cur = epg.now(now)
-        val nxt = epg.next(now)
-        if (cur == null) {
-            Text(t("Ingen programinformation", "No programme information"), color = Palette.Faint, fontSize = 16.sp)
-        } else {
-            SectionLabel(t("Nu", "Now"))
-            Spacer(Modifier.height(6.dp))
-            Text(cur.title, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(hhmm(cur.start), fontSize = 14.sp, color = Palette.Dim)
-                ProgressLine(cur.progress(now), Modifier.weight(1f).padding(horizontal = 10.dp))
-                Text(hhmm(cur.end), fontSize = 14.sp, color = Palette.Dim)
-            }
-            cur.desc?.let {
-                Spacer(Modifier.height(14.dp))
-                Text(it, fontSize = 15.sp, color = Palette.Dim, maxLines = 6, overflow = TextOverflow.Ellipsis, lineHeight = 21.sp)
-            }
-        }
-        if (nxt != null) {
-            Spacer(Modifier.height(22.dp))
-            SectionLabel(t("Härnäst", "Up next"))
-            Spacer(Modifier.height(6.dp))
-            Text("${hhmm(nxt.start)}  ${nxt.title}", fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        Spacer(Modifier.weight(1f))
-        Text(t("OK  –  titta tillsammans", "OK  –  watch together"), fontSize = 13.sp, color = Palette.Faint)
-        Text(t("Håll inne OK  –  favorit", "Hold OK  –  favourite"), fontSize = 13.sp, color = Palette.Faint)
+        ChannelGuide(focused?.copy(categoryId = catId), focused?.let { epg[it.id] }, now, api, sync, catName, Modifier.weight(1f).fillMaxHeight())
     }
 }
 

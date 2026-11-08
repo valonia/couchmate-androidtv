@@ -225,6 +225,7 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
         when {
             trackPanel -> trackPanel = false
             panelOpen -> panelOpen = false
+            state?.reminder != null -> sync.reminderCancel() // Tillbaka avbryter påminnelsen för alla
             state?.upNext != null -> sync.nextCancel() // Tillbaka avbryter "nästa avsnitt" för alla
             else -> onExit()
         }
@@ -246,6 +247,7 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
                     Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
                         if (firstPress) {
                             when {
+                                sync.state.value?.reminder != null -> sync.reminderNow() // OK = byt kanal nu
                                 sync.state.value?.upNext != null -> sync.nextNow() // OK = spela nästa avsnitt nu
                                 live -> panelOpen = true
                                 else -> { sync.toggle(); poke() }
@@ -333,6 +335,16 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
             TrackPanel(
                 subs = subtitleOptions(player, tracks, prefs),
                 audio = audioOptions(player, tracks, prefs),
+            )
+        }
+
+        // Påminnelse: kanalen byts snart för alla
+        val reminder = st?.reminder
+        if (reminder != null && !panelOpen && !trackPanel) {
+            ReminderCard(
+                reminder, secondsLeft = ((reminder.switchAt - sync.serverNow() + 999) / 1000).coerceAtLeast(0),
+                interactive = false, onNow = { sync.reminderNow() }, onCancel = { sync.reminderCancel() },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(48.dp),
             )
         }
 

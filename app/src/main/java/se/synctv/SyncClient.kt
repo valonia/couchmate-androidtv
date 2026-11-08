@@ -48,6 +48,7 @@ class SyncClient(
     val connected = MutableStateFlow(false)
     val error = MutableStateFlow<String?>(null)
     val favorites = MutableStateFlow<List<Favorite>>(emptyList())
+    val reminders = MutableStateFlow<List<Reminder>>(emptyList())
 
     fun serverNow(): Long = System.currentTimeMillis() + offsetMs
 
@@ -136,6 +137,22 @@ class SyncClient(
                     )
                 }
             }
+            "reminders" -> {
+                val a = o.getJSONArray("reminders")
+                reminders.value = List(a.length()) { i ->
+                    val r = a.getJSONObject(i)
+                    val c = r.getJSONObject("channel")
+                    Reminder(
+                        key = r.getString("key"),
+                        channel = Item(
+                            id = c.getString("id"), name = c.optString("name"), icon = c.optStringOrNull("icon"), ext = c.optString("ext"),
+                            categoryId = c.optStringOrNull("categoryId"), categoryName = c.optStringOrNull("categoryName"),
+                        ),
+                        title = r.optString("title"), desc = r.optStringOrNull("desc"),
+                        start = r.optLong("start"), end = r.optLong("end"), addedBy = r.optStringOrNull("addedBy"),
+                    )
+                }
+            }
             "members" -> {
                 val a = o.getJSONArray("members")
                 members.value = List(a.length()) { i ->
@@ -165,6 +182,10 @@ class SyncClient(
             val m = u.optJSONObject("media")
             UpNext(m?.optString("title") ?: "", m?.optStringOrNull("subtitle"), m?.optStringOrNull("icon"), u.optLong("startsAt"))
         }
+        val reminder = o.optJSONObject("reminder")?.let { r ->
+            val c = r.optJSONObject("channel")
+            PendingReminder(r.optString("key"), r.optString("title"), r.optLong("start"), c?.optString("name") ?: "", c?.optStringOrNull("icon"), r.optLong("switchAt"))
+        }
         return RoomState(
             media = media,
             paused = o.getBoolean("paused"),
@@ -175,6 +196,7 @@ class SyncClient(
             changedBy = o.optStringOrNull("changedBy"),
             action = o.optStringOrNull("action"),
             upNext = upNext,
+            reminder = reminder,
         )
     }
 
@@ -231,6 +253,27 @@ class SyncClient(
             favAdd(type, item.id, item.name, item.icon, item.ext, item.categoryId, categoryName ?: item.categoryName); true
         }
     }
+
+    // ---- påminnelser (gemensamma för rummet)
+    fun reminderFor(channelId: String, start: Long) = reminders.value.firstOrNull { it.key == reminderKey(channelId, start) }
+
+    /** Lägg till eller ta bort en påminnelse för ett program. Returnerar true om den nu finns. */
+    fun toggleReminder(channel: Item, p: Program, categoryName: String?): Boolean {
+        val key = reminderKey(channel.id, p.start)
+        if (reminders.value.any { it.key == key }) {
+            reminderRemove(key)
+            return false
+        }
+        send(JSONObject().put("type", "reminder_add")
+            .put("channel", JSONObject()
+                .put("id", channel.id).put("name", channel.name).put("icon", channel.icon).put("ext", channel.ext.ifBlank { "ts" })
+                .put("categoryId", channel.categoryId).put("categoryName", categoryName ?: channel.categoryName))
+            .put("program", JSONObject().put("title", p.title).put("desc", p.desc).put("start", p.start).put("end", p.end)))
+        return true
+    }
+    fun reminderRemove(key: String) = send(JSONObject().put("type", "reminder_remove").put("key", key))
+    fun reminderNow() = send(JSONObject().put("type", "reminder_now"))
+    fun reminderCancel() = send(JSONObject().put("type", "reminder_cancel"))
 
     fun nextNow() = send(JSONObject().put("type", "next_now"))
     fun nextCancel() = send(JSONObject().put("type", "next_cancel"))

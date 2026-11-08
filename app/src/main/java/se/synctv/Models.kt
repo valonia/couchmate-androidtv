@@ -97,7 +97,24 @@ data class RoomState(
     val changedBy: String?,
     val action: String?,
     val upNext: UpNext? = null,
+    val reminder: PendingReminder? = null,
 )
+
+/** En påminnelse som snart byter kanal för alla (vid [switchAt], serverns klocka i ms). */
+data class PendingReminder(val key: String, val title: String, val start: Long, val channelName: String, val channelIcon: String?, val switchAt: Long)
+
+/** "Byt till den här kanalen när programmet börjar" – gemensam för rummet. */
+data class Reminder(
+    val key: String,
+    val channel: Item,
+    val title: String,
+    val desc: String?,
+    val start: Long,
+    val end: Long,
+    val addedBy: String?,
+)
+
+fun reminderKey(channelId: String, start: Long) = "$channelId:$start"
 
 /** "Nästa avsnitt" som startar automatiskt vid [startsAt] (serverns klocka, ms). */
 data class UpNext(val title: String, val subtitle: String?, val icon: String?, val startsAt: Long)

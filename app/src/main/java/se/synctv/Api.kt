@@ -139,6 +139,15 @@ class Api(private val base: String, private val pin: String) {
         return m
     }
 
+    /** Hela tablån för en kanal (pågående och kommande program). */
+    suspend fun guide(channelId: String): List<Program> {
+        val a = JSONArray(get("/api/live/guide?id=" + enc(channelId)))
+        return List(a.length()) { i ->
+            val p = a.getJSONObject(i)
+            Program(p.optString("title"), p.optStringOrNull("desc"), p.optLong("start"), p.optLong("end"))
+        }
+    }
+
     suspend fun epgFor(ids: List<String>): Map<String, List<Program>> =
         parseEpg(JSONObject(get("/api/live/epg?ids=" + enc(ids.joinToString(",")))))
 
