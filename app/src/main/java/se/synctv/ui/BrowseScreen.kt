@@ -95,49 +95,24 @@ fun BrowseScreen(sync: SyncClient, api: Api, onOpenPlayer: () -> Unit, onSetting
     BackHandler(enabled = showMembers) { showMembers = false }
 
     Box(Modifier.fillMaxSize()) {
-    Column(Modifier.fillMaxSize().background(Palette.Bg)) {
-        // ---- toppfält
-        Row(
-            Modifier.fillMaxWidth().padding(start = 40.dp, end = 40.dp, top = 22.dp, bottom = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Couch", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Palette.Text)
-            Text("mates", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Palette.Accent)
-            Spacer(Modifier.width(24.dp))
-            Section.entries.filter { it != Section.SEARCH }.forEach { s ->
-                Pill(
-                    // Favoriter får en markering när det finns nya avsnitt, t.ex. "Favoriter ●2"
-                    if (s == Section.FAVORITES && newEpisodes > 0) "${s.label} ●$newEpisodes" else s.label,
-                    selected = section == s,
-                    onClick = { section = s },
-                    modifier = if (s == section) Modifier.focusRequester(firstFocus) else Modifier,
-                )
-                Spacer(Modifier.width(2.dp))
-            }
-            Spacer(Modifier.width(6.dp))
-            // Sök och inställningar som ikoner – tar mindre plats
-            IconPill(
-                Icons.Filled.Search, t("Sök", "Search"),
-                selected = section == Section.SEARCH,
-                onClick = { section = Section.SEARCH },
-                modifier = if (section == Section.SEARCH) Modifier.focusRequester(firstFocus) else Modifier,
-            )
-            Spacer(Modifier.width(4.dp))
-            IconPill(Icons.Filled.Settings, t("Inställningar", "Settings"), selected = false, onClick = onSettings)
-            Spacer(Modifier.weight(1f))
-            val media = state?.media
-            if (media != null) {
-                Pill("▶  ${media.title}", selected = true, onClick = onOpenPlayer, modifier = Modifier.widthIn(max = 200.dp))
-                Spacer(Modifier.width(6.dp))
-                Pill("■", selected = false, onClick = { sync.stopPlayback() })
-                Spacer(Modifier.width(16.dp))
-            }
-            ViewersChip(connected, members, syncError, onClick = { showMembers = true })
-            Spacer(Modifier.width(20.dp))
-            Clock()
-        }
+    Row(Modifier.fillMaxSize().background(Palette.Bg)) {
+        // ---- menyn till vänster (fälls ihop till ikoner när man går in i innehållet)
+        SideNav(
+            section = section,
+            onSelect = { section = it },
+            newEpisodes = newEpisodes,
+            media = state?.media,
+            onOpenPlayer = onOpenPlayer,
+            onStop = { sync.stopPlayback() },
+            onSettings = onSettings,
+            connected = connected,
+            members = members,
+            error = syncError,
+            onMembers = { showMembers = true },
+            selectedFocus = firstFocus,
+        )
 
-        Box(Modifier.weight(1f).fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 20.dp)) {
+        Box(Modifier.weight(1f).fillMaxHeight().padding(start = 20.dp, end = 24.dp, top = 22.dp, bottom = 20.dp)) {
             when (section) {
                 Section.LIVE -> LiveBrowser(sync, api, playingId = state?.media?.takeIf { it.isLive }?.id)
                 Section.SEARCH -> SearchScreen(sync, api)
