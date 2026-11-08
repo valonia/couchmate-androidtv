@@ -261,6 +261,18 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
     val anyPanel = panelOpen || trackPanel || streamPanel
     val showOverlay = !anyPanel && (now < overlayUntil || st?.paused == true || pendingSeek != null)
     val chatWidth = if (chatVisible) 400.dp else 0.dp
+    // Videoytan ritas inte alltid om när den blir större igen (chatten döljs) – be den göra om layouten.
+    var playerView by remember { mutableStateOf<PlayerView?>(null) }
+    LaunchedEffect(chatVisible) {
+        repeat(3) {
+            delay(60)
+            playerView?.let { v ->
+                v.videoSurfaceView?.requestLayout()
+                v.requestLayout()
+                v.invalidate()
+            }
+        }
+    }
 
     Box(
         Modifier
@@ -322,6 +334,7 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
+                    playerView = this
                     useController = false
                     this.player = player
                     keepScreenOn = true
