@@ -20,6 +20,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -237,9 +240,16 @@ private fun GroupList(
 ) {
     Column(modifier.fillMaxHeight().background(Palette.Panel, RoundedCornerShape(12.dp)).padding(8.dp)) {
         SectionLabel(t("Grupper", "Groups"), Modifier.padding(start = 10.dp, top = 6.dp, bottom = 8.dp))
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            items(categories) { c ->
-                FocusRow(onClick = { onSelect(c) }, selected = c.id == selectedId, height = 46.dp) {
+        // Från menyn hamnar man på vald grupp (första gången: överst), inte på raden i samma höjd.
+        val listState = rememberLazyListState()
+        val entry = rememberFocusEntry(listState)
+        val selIdx = categories.indexOfFirst { it.id == selectedId }
+        LaunchedEffect(categories.size) {
+            if (selIdx > 0 && listState.layoutInfo.visibleItemsInfo.none { it.index == selIdx && it.offset >= 0 }) listState.scrollToItem(selIdx)
+        }
+        LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.focusEntry(entry) { intArrayOf(selIdx) }) {
+            itemsIndexed(categories) { i, c ->
+                FocusRow(onClick = { onSelect(c) }, selected = c.id == selectedId, height = 46.dp, modifier = entry.item(i)) {
                     Text(c.name, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
@@ -294,6 +304,10 @@ private fun LiveBrowser(sync: SyncClient, api: Api, playingId: String?) {
     }
 
     val catName = cats.firstOrNull { it.id == catId }?.name ?: ""
+    // Från grupperna: tillbaka till kanalen man var på, annars den som spelas, annars översta.
+    val chState = rememberLazyListState()
+    val chEntry = rememberFocusEntry(chState)
+    LaunchedEffect(catId) { chEntry.last = -1; chState.scrollToItem(0) }
     Row(Modifier.fillMaxSize()) {
         GroupList(cats, catId, { catId = it.id }, Modifier.width(250.dp))
         Spacer(Modifier.width(14.dp))
@@ -306,15 +320,19 @@ private fun LiveBrowser(sync: SyncClient, api: Api, playingId: String?) {
             when {
                 error != null -> Message(t("Fel: $error", "Error: $error"), error = true)
                 loading && items.isEmpty() -> Message(t("Laddar kanaler…", "Loading channels…"))
-                else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.focusRestorer()) {
-                    items(items) { item ->
+                else -> LazyColumn(
+                    state = chState, verticalArrangement = Arrangement.spacedBy(2.dp),
+                    modifier = Modifier.focusEntry(chEntry) { intArrayOf(chEntry.last, items.indexOfFirst { it.id == playingId }) },
+                ) {
+                    itemsIndexed(items) { idx, item ->
                         ChannelRow(
+                            modifier = chEntry.item(idx),
                             item = item,
                             epg = epg[item.id],
                             nowSec = now,
                             playing = item.id == playingId,
                             iconUrl = api.abs(item.icon),
-                            onFocus = { focused = item },
+                            onFocus = { focused = item; chEntry.last = idx },
                             onClick = { sync.load("live", item.id, item.ext, item.name, catName, item.icon, catId) },
                             favorite = favKeys.contains(favKey("live", item.id)),
                             onLongClick = { sync.toggleFavorite("live", item.copy(categoryId = catId), catName) },
@@ -363,6 +381,10 @@ private fun VodBrowser(sync: SyncClient, api: Api, section: Section) {
     }
     BackHandler(enabled = series != null) { series = null }
     val catName = cats.firstOrNull { it.id == catId }?.name
+    // Från grupperna: tillbaka till filmen man var på, annars översta.
+    val gridState = rememberLazyGridState()
+    val gridEntry = rememberFocusEntry(gridState)
+    LaunchedEffect(catId) { gridEntry.last = -1; gridState.scrollToItem(0) }
 
     Row(Modifier.fillMaxSize()) {
         GroupList(cats, catId, { catId = it.id }, Modifier.width(250.dp))
@@ -387,16 +409,19 @@ private fun VodBrowser(sync: SyncClient, api: Api, section: Section) {
                     Text(t("Håll inne OK för att lägga till i favoriter", "Hold OK to add to favourites"), fontSize = 13.sp, color = Palette.Faint,
                         modifier = Modifier.padding(start = 6.dp, top = 10.dp))
                     LazyVerticalGrid(
+                        state = gridState,
+                        modifier = Modifier.focusEntry(gridEntry) { intArrayOf(gridEntry.last) },
                         columns = GridCells.Adaptive(92.dp),
                         contentPadding = PaddingValues(start = 6.dp, end = 6.dp, top = 12.dp, bottom = 24.dp),
                         horizontalArrangement = Arrangement.spacedBy(18.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
-                        items(items) { item ->
+                        itemsIndexed(items) { idx, item ->
                             PosterCard(
+                                modifier = gridEntry.item(idx),
                                 title = cleanTitle(item.name),
                                 iconUrl = api.abs(item.icon),
-                                onFocus = { focused = item },
+                                onFocus = { focused = item; gridEntry.last = idx },
                                 onClick = {
                                     if (section == Section.SERIES) series = item
                                     else sync.load("movie", item.id, item.ext, cleanTitle(item.name), yearFromTitle(item.name) ?: item.year, item.icon, catId)
