@@ -41,6 +41,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -94,6 +97,19 @@ fun BrowseScreen(sync: SyncClient, api: Api, onOpenPlayer: () -> Unit, onSetting
     var showMembers by remember { mutableStateOf(false) }
     BackHandler(enabled = showMembers) { showMembers = false }
 
+    // Tillbaka i innehållet: ett steg närmare menyn (t.ex. tablå → kanaler → grupper → menyn).
+    // Står man redan i menyn stängs appen (systemets vanliga tillbaka).
+    var railFocused by remember { mutableStateOf(false) }
+    val rootView = LocalView.current
+    BackHandler(enabled = !railFocused && !showMembers) {
+        // Samma som att trycka vänster på fjärren; gör det ingenting hoppar vi direkt till menyn.
+        val down = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_DPAD_LEFT)
+        val up = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_DPAD_LEFT)
+        val handled = rootView.dispatchKeyEvent(down)
+        rootView.dispatchKeyEvent(up)
+        if (!handled) runCatching { firstFocus.requestFocus() }
+    }
+
     Box(Modifier.fillMaxSize()) {
     Row(Modifier.fillMaxSize().background(Palette.Bg)) {
         // ---- menyn till vänster (fälls ihop till ikoner när man går in i innehållet)
@@ -110,6 +126,7 @@ fun BrowseScreen(sync: SyncClient, api: Api, onOpenPlayer: () -> Unit, onSetting
             error = syncError,
             onMembers = { showMembers = true },
             selectedFocus = firstFocus,
+            onRailFocus = { railFocused = it },
         )
 
         Box(Modifier.weight(1f).fillMaxHeight().padding(start = 20.dp, end = 24.dp, top = 22.dp, bottom = 20.dp)) {

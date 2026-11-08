@@ -102,6 +102,7 @@ fun SideNav(
     error: String?,
     onMembers: () -> Unit,
     selectedFocus: FocusRequester,
+    onRailFocus: (Boolean) -> Unit = {},
 ) {
     var expanded by remember { mutableStateOf(false) }
     val width by animateDpAsState(if (expanded) EXPANDED else COLLAPSED, tween(220), label = "nav")
@@ -110,7 +111,7 @@ fun SideNav(
             .width(width)
             .fillMaxHeight()
             .background(Palette.Panel)
-            .onFocusChanged { expanded = it.hasFocus }
+            .onFocusChanged { expanded = it.hasFocus; onRailFocus(it.hasFocus) }
             // Kommer man tillbaka till menyn hamnar fokus på den valda fliken.
             .focusProperties { enter = { selectedFocus } }
             .focusGroup()
@@ -129,7 +130,7 @@ fun SideNav(
         }
         Spacer(Modifier.height(14.dp))
 
-        listOf(Section.LIVE, Section.MOVIES, Section.SERIES, Section.FAVORITES, Section.HISTORY, Section.SEARCH).forEach { s ->
+        listOf(Section.SEARCH, Section.LIVE, Section.MOVIES, Section.SERIES, Section.FAVORITES, Section.HISTORY).forEach { s ->
             NavItem(
                 icon = s.icon(),
                 label = s.label,
