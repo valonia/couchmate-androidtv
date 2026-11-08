@@ -68,7 +68,7 @@ fun dayLabel(start: Long): String {
  * → på fjärren flyttar in i tablån; OK på ett kommande program = påminnelse för hela rummet.
  */
 @Composable
-fun ChannelGuide(item: Item?, shortEpg: List<Program>?, now: Long, api: Api, sync: SyncClient, categoryName: String?, modifier: Modifier = Modifier) {
+fun ChannelGuide(item: Item?, shortEpg: List<Program>?, now: Long, api: Api, sync: SyncClient, categoryName: String?, modifier: Modifier = Modifier, showHints: Boolean = true) {
     val reminders by sync.reminders.collectAsState()
     var guide by remember(item?.id) { mutableStateOf<List<Program>?>(null) }
     LaunchedEffect(item?.id) {
@@ -121,9 +121,11 @@ fun ChannelGuide(item: Item?, shortEpg: List<Program>?, now: Long, api: Api, syn
                 }
             }
         }
+        if (showHints) {
         Spacer(Modifier.height(8.dp))
         Text(t("→  tablå   ·   OK på ett program  –  påminnelse", "→  guide   ·   OK on a programme  –  reminder"), fontSize = 13.sp, color = Palette.Faint)
         Text(t("OK på kanal  –  titta   ·   Håll inne OK  –  favorit", "OK on channel  –  watch   ·   Hold OK  –  favourite"), fontSize = 13.sp, color = Palette.Faint)
+        }
     }
 }
 

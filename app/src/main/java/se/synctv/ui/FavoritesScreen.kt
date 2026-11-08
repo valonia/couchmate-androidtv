@@ -32,6 +32,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.text.font.FontWeight
@@ -88,18 +93,31 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
     val g = guideFor
     if (g != null) {
         val first = remember { FocusRequester() }
+        // När man släpper OK efter "håll inne" räknas det som ett tryck på knappen som just fått fokus.
+        // Därför ignoreras tryck en kort stund efter att tablån öppnats.
+        var released by remember(g.key) { mutableStateOf(false) }
+        fun guarded(action: () -> Unit): () -> Unit = { if (released) action() }
         LaunchedEffect(g.key) { delay(80); runCatching { first.requestFocus() } }
-        Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 16.dp).onPreviewKeyEvent { ev ->
+                val ok = ev.key == Key.DirectionCenter || ev.key == Key.Enter || ev.key == Key.NumPadEnter
+                when {
+                    released || !ok -> { released = true; false }
+                    ev.type == KeyEventType.KeyUp -> { released = true; true } // släppet efter "håll inne" – ignorera
+                    else -> true // upprepningar medan knappen fortfarande hålls in
+                }
+            },
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 12.dp, bottom = 12.dp)) {
-                Pill(t("‹  Tillbaka", "‹  Back"), selected = false, onClick = { guideFor = null }, modifier = Modifier.focusRequester(first))
+                Pill(t("‹  Tillbaka", "‹  Back"), selected = false, onClick = guarded { guideFor = null }, modifier = Modifier.focusRequester(first))
                 Spacer(Modifier.width(8.dp))
-                Pill(t("Titta nu", "Watch now"), selected = true, onClick = {
+                Pill(t("Titta nu", "Watch now"), selected = true, onClick = guarded {
                     sync.load("live", g.id, g.ext.ifBlank { "ts" }, g.name, g.categoryName, g.icon, g.categoryId)
                 })
                 Spacer(Modifier.width(8.dp))
-                Pill(t("Ta bort från favoriter", "Remove from favourites"), selected = false, onClick = { sync.favRemove(g.key); guideFor = null })
+                Pill(t("Ta bort från favoriter", "Remove from favourites"), selected = false, onClick = guarded { sync.favRemove(g.key); guideFor = null })
             }
-            ChannelGuide(g.toItem(), epg[g.id], now, api, sync, g.categoryName, Modifier.fillMaxSize())
+            ChannelGuide(g.toItem(), epg[g.id], now, api, sync, g.categoryName, Modifier.fillMaxSize(), showHints = false)
         }
         return
     }
