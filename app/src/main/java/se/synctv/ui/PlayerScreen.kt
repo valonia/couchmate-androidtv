@@ -52,6 +52,9 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -121,6 +124,7 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
         onDispose { player.removeListener(listener) }
     }
     val state by sync.state.collectAsState()
+    val chatMsgs by sync.chat.collectAsState()
     val members by sync.members.collectAsState()
     val connected by sync.connected.collectAsState()
     val scope = rememberCoroutineScope()
@@ -129,6 +133,7 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
         sync.setWatching(true)
         onDispose {
             sync.setWatching(false)
+            sync.setChat(false)
             player.release()
         }
     }
@@ -171,9 +176,17 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
     val media = state?.media
     var channels by remember { mutableStateOf<List<Item>>(emptyList()) }
     var epg by remember { mutableStateOf<Map<String, List<Program>>>(emptyMap()) }
-    LaunchedEffect(media?.categoryId, media?.isLive) {
+    // Livestream från en källa (t.ex. Twitch): egen overlay, kvalitet och chatt i stället för kanallista/undertext.
+    val stream = media?.type == "plugin"
+    var showChat by remember { mutableStateOf(prefs.chatOn) }
+    val chatVisible = stream && showChat && media?.chat == true
+    LaunchedEffect(chatVisible) { sync.setChat(chatVisible) }
+    LaunchedEffect(media?.key) { applyStreamQuality(player, prefs, stream) }
+    fun toggleChat() { showChat = !showChat; prefs.chatOn = showChat }
+
+    LaunchedEffect(media?.categoryId, media?.type) {
         val cat = media?.categoryId
-        if (media?.isLive != true || cat == null) return@LaunchedEffect
+        if (media?.type != "live" || cat == null) return@LaunchedEffect
         channels = runCatching { api.items("live", cat) }.getOrDefault(emptyList())
         while (isActive) {
             epg = runCatching { api.epg(cat) }.getOrDefault(epg)
@@ -207,7 +220,7 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
 
     fun zap(dir: Int) {
         val m = sync.state.value?.media ?: return
-        if (!m.isLive || channels.size < 2) return
+        if (m.type != "live" || channels.size < 2) return
         val i = channels.indexOfFirst { it.id == m.id }
         if (i < 0) return
         loadChannel(channels[(i + dir + channels.size) % channels.size])
@@ -216,13 +229,15 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
     // ---- kanallista ovanpå videon
     var panelOpen by remember { mutableStateOf(false) }
     var trackPanel by remember { mutableStateOf(false) }
+    var streamPanel by remember { mutableStateOf(false) }
     val rootFocus = remember { FocusRequester() }
-    LaunchedEffect(panelOpen, trackPanel) {
-        if (!panelOpen && !trackPanel) { delay(50); runCatching { rootFocus.requestFocus() } }
+    LaunchedEffect(panelOpen, trackPanel, streamPanel) {
+        if (!panelOpen && !trackPanel && !streamPanel) { delay(50); runCatching { rootFocus.requestFocus() } }
     }
 
     BackHandler {
         when {
+            streamPanel -> streamPanel = false
             trackPanel -> trackPanel = false
             panelOpen -> panelOpen = false
             state?.reminder != null -> sync.reminderCancel() // Tillbaka avbryter påminnelsen för alla
@@ -232,17 +247,28 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
     }
 
     val st = state
-    val live = media?.isLive == true
-    val showOverlay = !panelOpen && !trackPanel && (now < overlayUntil || st?.paused == true || pendingSeek != null)
+    val live = media?.type == "live" // TV-kanal: kanallista, tablå och kanalbyte
+    val anyPanel = panelOpen || trackPanel || streamPanel
+    val showOverlay = !anyPanel && (now < overlayUntil || st?.paused == true || pendingSeek != null)
+    val chatWidth = if (chatVisible) 400.dp else 0.dp
 
     Box(
         Modifier
             .fillMaxSize()
             .background(Color.Black)
             .onKeyEvent { ev ->
-                if (panelOpen || trackPanel) return@onKeyEvent false // panelerna sköter sig själva
+                if (anyPanel) return@onKeyEvent false // panelerna sköter sig själva
                 if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false
                 val firstPress = ev.nativeKeyEvent.repeatCount == 0
+                // Livestream: OK/▶/▼ = kvalitet & chatt, ◀ = visa/dölj chatten.
+                if (stream && sync.state.value?.reminder == null) {
+                    when (ev.key) {
+                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.DirectionRight, Key.DirectionDown -> { if (firstPress) streamPanel = true; return@onKeyEvent true }
+                        Key.DirectionLeft -> { if (firstPress) { if (media?.chat == true) toggleChat() else streamPanel = true }; return@onKeyEvent true }
+                        Key.DirectionUp -> { poke(); return@onKeyEvent true }
+                        else -> Unit
+                    }
+                }
                 when (ev.key) {
                     Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
                         if (firstPress) {
@@ -289,17 +315,26 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
                     }
                 }
             },
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().padding(end = chatWidth),
         )
+
+        if (chatVisible) {
+            ChatPanel(chatMsgs, Modifier.align(Alignment.CenterEnd).width(chatWidth).fillMaxHeight())
+        }
 
         // Status (buffrar/synkar) när overlayn är dold
         if (!showOverlay && !panelOpen && controller.status.isNotEmpty()) {
-            StatusChip(controller.status, Modifier.align(Alignment.TopEnd).padding(28.dp))
+            StatusChip(controller.status, Modifier.align(Alignment.TopEnd).padding(top = 28.dp, end = 28.dp + chatWidth))
         }
 
-        AnimatedVisibility(visible = showOverlay && st != null && media != null, enter = fadeIn(), exit = fadeOut()) {
+        AnimatedVisibility(
+            visible = showOverlay && st != null && media != null, enter = fadeIn(), exit = fadeOut(),
+            modifier = Modifier.padding(end = chatWidth),
+        ) {
             if (st != null && media != null) {
-                if (media.isLive) {
+                if (media.type == "plugin") {
+                    StreamOverlay(st, media, members, connected, controller.status, api, hasChat = media.chat, chatOn = chatVisible)
+                } else if (media.isLive) {
                     LiveOverlay(st, media, epg[media.id], channels.firstOrNull { it.id == media.id }, members, connected, controller.status, api)
                 } else {
                     VodOverlay(
@@ -335,12 +370,28 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
             TrackPanel(
                 subs = subtitleOptions(player, tracks, prefs),
                 audio = audioOptions(player, tracks, prefs),
+                onClose = { trackPanel = false },
+            )
+        }
+
+        AnimatedVisibility(
+            visible = streamPanel,
+            enter = slideInHorizontally { it } + fadeIn(),
+            exit = slideOutHorizontally { it } + fadeOut(),
+        ) {
+            StreamPanel(
+                quality = qualityOptions(player, tracks, prefs),
+                chat = if (media?.chat == true) listOf(
+                    TrackOption(t("Visa chatten", "Show chat"), showChat) { if (!showChat) toggleChat() },
+                    TrackOption(t("Dölj chatten", "Hide chat"), !showChat) { if (showChat) toggleChat() },
+                ) else null,
+                onClose = { streamPanel = false },
             )
         }
 
         // Påminnelse: kanalen byts snart för alla
         val reminder = st?.reminder
-        if (reminder != null && !panelOpen && !trackPanel) {
+        if (reminder != null && !anyPanel) {
             ReminderCard(
                 reminder, secondsLeft = ((reminder.switchAt - sync.serverNow() + 999) / 1000).coerceAtLeast(0),
                 interactive = false, onNow = { sync.reminderNow() }, onCancel = { sync.reminderCancel() },
@@ -350,7 +401,7 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
 
         // "Nästa avsnitt" när ett avsnitt tagit slut
         val upNext = st?.upNext
-        if (upNext != null && !panelOpen && !trackPanel) {
+        if (upNext != null && !anyPanel) {
             UpNextCard(upNext, secondsLeft = ((upNext.startsAt - sync.serverNow()) / 1000.0).coerceAtLeast(0.0), api = api,
                 modifier = Modifier.align(Alignment.BottomEnd).padding(48.dp))
         }
@@ -420,6 +471,81 @@ private fun TopStrip(st: RoomState, members: List<Member>, connected: Boolean) {
         ViewersChip(connected, members.filter { it.watching })
         Spacer(Modifier.width(20.dp))
         Clock(26)
+    }
+}
+
+/** Overlay för livestreams från källor (t.ex. Twitch): bild, titel, kanal och LIVE. */
+@Composable
+private fun StreamOverlay(
+    st: RoomState,
+    media: Media,
+    members: List<Member>,
+    connected: Boolean,
+    status: String,
+    api: Api,
+    hasChat: Boolean,
+    chatOn: Boolean,
+) {
+    Box(Modifier.fillMaxSize()) {
+        TopStrip(st, members, connected)
+        Column(
+            Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xF00A0C10))))
+                .padding(start = 56.dp, end = 56.dp, top = 80.dp, bottom = 40.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Thumb(api.abs(media.icon), media.subtitle ?: media.title, Modifier.width(150.dp).height(84.dp), corner = 10.dp)
+                Spacer(Modifier.width(24.dp))
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(media.subtitle ?: media.title, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        Spacer(Modifier.width(12.dp))
+                        LiveBadge()
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(media.title, fontSize = 18.sp, color = Palette.Dim, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            Row {
+                if (status.isNotEmpty()) Text(status, fontSize = 14.sp, color = Color(0xFF9FB4FF))
+                Spacer(Modifier.weight(1f))
+                val chatHint = if (!hasChat) "" else if (chatOn) t("◀  dölj chatt   ·   ", "◀  hide chat   ·   ") else t("◀  visa chatt   ·   ", "◀  show chat   ·   ")
+                Text(chatHint + t("OK  kvalitet & chatt   ·   ⏯  paus   ·   Tillbaka  meny", "OK  quality & chat   ·   ⏯  pause   ·   Back  menu"), fontSize = 13.sp, color = Palette.Faint)
+            }
+        }
+    }
+}
+
+/** Livechatten till höger om videon. Nyaste längst ner. */
+@Composable
+private fun ChatPanel(messages: List<se.synctv.ChatMsg>, modifier: Modifier = Modifier) {
+    Column(modifier.background(Color(0xFF0E1015)).padding(start = 18.dp, end = 18.dp, top = 22.dp, bottom = 16.dp)) {
+        Text(t("Chatt", "Chat"), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Palette.Dim)
+        Spacer(Modifier.height(10.dp))
+        if (messages.isEmpty()) {
+            Text(t("Väntar på meddelanden…", "Waiting for messages…"), fontSize = 14.sp, color = Palette.Faint)
+        }
+        // Nyaste meddelandet längst ner och alltid synligt.
+        val listState = rememberLazyListState()
+        LaunchedEffect(messages.lastOrNull()) { listState.scrollToItem(0) }
+        LazyColumn(Modifier.weight(1f), state = listState, reverseLayout = true, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            val list = messages.asReversed()
+            items(list.size) { i ->
+                val m = list[i]
+                val nameColor = m.color?.let { runCatching { Color(android.graphics.Color.parseColor(it)) }.getOrNull() } ?: Palette.Accent
+                Text(
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(color = nameColor, fontWeight = FontWeight.Bold)) { append(m.user) }
+                        append("  ")
+                        append(m.text)
+                    },
+                    fontSize = 15.sp, color = Palette.Text, lineHeight = 20.sp,
+                )
+            }
+        }
     }
 }
 

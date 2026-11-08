@@ -49,6 +49,9 @@ class SyncClient(
     val error = MutableStateFlow<String?>(null)
     val favorites = MutableStateFlow<List<Favorite>>(emptyList())
     val reminders = MutableStateFlow<List<Reminder>>(emptyList())
+    /** Livechatt för strömmen som spelas (bara när den visas). */
+    val chat = MutableStateFlow<List<ChatMsg>>(emptyList())
+    @Volatile private var chatOn = false
 
     fun serverNow(): Long = System.currentTimeMillis() + offsetMs
 
@@ -79,6 +82,7 @@ class SyncClient(
                 synchronized(samples) { samples.clear() }
                 webSocket.send(JSONObject().put("type", "hello").put("name", name).put("device", device).toString())
                 if (watching) webSocket.send(JSONObject().put("type", "watching").put("value", true).toString())
+                if (chatOn) webSocket.send(JSONObject().put("type", "chat_sub").put("on", true).toString())
                 pingJob?.cancel()
                 pingJob = scope.launch {
                     repeat(5) { ping(); delay(300) }
@@ -125,6 +129,14 @@ class SyncClient(
                 }
             }
             "state" -> state.value = parseState(o.getJSONObject("state"))
+            "chat" -> {
+                val a = o.optJSONArray("messages")
+                val msgs = if (a == null) emptyList() else List(a.length()) { i ->
+                    val m = a.getJSONObject(i)
+                    ChatMsg(m.optString("user"), m.optStringOrNull("color"), m.optString("text"))
+                }
+                chat.value = (if (o.optBoolean("reset")) msgs else chat.value + msgs).takeLast(150)
+            }
             "favorites" -> {
                 val a = o.getJSONArray("favorites")
                 favorites.value = List(a.length()) { i ->
@@ -177,6 +189,7 @@ class SyncClient(
                 url = url,
                 seriesId = j.optStringOrNull("seriesId"),
                 live = j.optBoolean("live"),
+                chat = j.optBoolean("chat"),
             )
         }
         val upNext = o.optJSONObject("upNext")?.let { u ->
@@ -208,6 +221,14 @@ class SyncClient(
     private fun ping() = send(JSONObject().put("type", "ping").put("t", System.currentTimeMillis()))
 
     // ------------------------------------------------------------ kommandon
+
+    /** Visa chatten (servern skickar bara chatt till de som visar den). */
+    fun setChat(on: Boolean) {
+        if (chatOn == on) return
+        chatOn = on
+        if (!on) chat.value = emptyList()
+        send(JSONObject().put("type", "chat_sub").put("on", on))
+    }
 
     fun setWatching(value: Boolean) {
         watching = value

@@ -25,6 +25,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -188,7 +193,7 @@ fun applyTrackPrefs(player: ExoPlayer, prefs: Prefs) {
 
 /** Panel från höger: välj undertext och ljudspår (gäller bara den här TV:n). */
 @Composable
-fun TrackPanel(subs: List<TrackOption>, audio: List<TrackOption>) {
+fun TrackPanel(subs: List<TrackOption>, audio: List<TrackOption>, onClose: () -> Unit) {
     val firstFocus = remember { FocusRequester() }
     val focusIdx = subs.indexOfFirst { it.selected }.coerceAtLeast(0)
     LaunchedEffect(Unit) { delay(80); runCatching { firstFocus.requestFocus() } }
@@ -196,7 +201,7 @@ fun TrackPanel(subs: List<TrackOption>, audio: List<TrackOption>) {
     Row(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f).fillMaxHeight().background(Color(0x33000000)))
         Column(
-            Modifier.width(560.dp).fillMaxHeight()
+            Modifier.width(560.dp).fillMaxHeight().closeOnBack(onClose)
                 .background(Brush.horizontalGradient(listOf(Color(0xE60A0C10), Color(0xF50A0C10))))
                 .padding(start = 24.dp, end = 32.dp, top = 32.dp, bottom = 24.dp),
         ) {
@@ -218,6 +223,79 @@ fun TrackPanel(subs: List<TrackOption>, audio: List<TrackOption>) {
             }
         }
     }
+}
+
+/** Kvaliteter i strömmen (videovarianter), störst först, plus "Automatisk". Sparas för nästa ström. */
+fun qualityOptions(player: ExoPlayer, tracks: Tracks, prefs: Prefs): List<TrackOption> {
+    val formats = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
+        .flatMap { g -> (0 until g.length).filter { g.isTrackSupported(it) }.map { g.getTrackFormat(it) } }
+        .filter { it.height > 0 }
+        .distinctBy { it.height }
+        .sortedByDescending { it.height }
+    val chosen = prefs.streamHeight
+    val list = mutableListOf(TrackOption(t("Automatisk", "Automatic"), chosen == 0 || formats.none { it.height == chosen }) {
+        prefs.streamHeight = 0
+        applyStreamQuality(player, prefs, true)
+    })
+    formats.forEachIndexed { i, f ->
+        val fps = if (f.frameRate >= 49f) "${Math.round(f.frameRate)}" else ""
+        val label = "${f.height}p$fps" + if (i == 0) t("  (original)", "  (source)") else ""
+        list += TrackOption(label, f.height == chosen) {
+            prefs.streamHeight = f.height
+            applyStreamQuality(player, prefs, true)
+        }
+    }
+    return list
+}
+
+/** Lås livestreamens kvalitet till vald höjd (bara för strömmar, inte TV-kanaler eller filmer). */
+fun applyStreamQuality(player: ExoPlayer, prefs: Prefs, isStream: Boolean) {
+    val h = if (isStream) prefs.streamHeight else 0
+    val b = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+    if (h > 0) b.setMaxVideoSize(Int.MAX_VALUE, h).setMinVideoSize(0, h)
+    else b.clearVideoSizeConstraints().setMinVideoSize(0, 0)
+    player.trackSelectionParameters = b.build()
+}
+
+/** Panel från höger för livestreams: kvalitet och chatt (gäller bara den här TV:n). */
+@Composable
+fun StreamPanel(quality: List<TrackOption>, chat: List<TrackOption>?, onClose: () -> Unit) {
+    val firstFocus = remember { FocusRequester() }
+    val focusIdx = quality.indexOfFirst { it.selected }.coerceAtLeast(0)
+    LaunchedEffect(Unit) { delay(80); runCatching { firstFocus.requestFocus() } }
+
+    Row(Modifier.fillMaxSize()) {
+        Box(Modifier.weight(1f).fillMaxHeight().background(Color(0x33000000)))
+        Column(
+            Modifier.width(460.dp).fillMaxHeight().closeOnBack(onClose)
+                .background(Color(0xFF0A0C10))
+                .padding(start = 24.dp, end = 32.dp, top = 32.dp, bottom = 24.dp),
+        ) {
+            Text(t("Ström", "Stream"), fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 14.dp))
+            Text(t("Gäller bara den här TV:n", "Only affects this TV"), fontSize = 14.sp, color = Palette.Faint, modifier = Modifier.padding(start = 14.dp, top = 2.dp, bottom = 14.dp))
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                if (chat != null) {
+                    item { Header(t("Chatt", "Chat")) }
+                    itemsIndexed(chat) { _, opt -> OptionRow(opt, Modifier) }
+                    item { Spacer(Modifier.height(18.dp)) }
+                }
+                item { Header(t("Kvalitet", "Quality")) }
+                itemsIndexed(quality) { idx, opt ->
+                    OptionRow(opt, if (idx == focusIdx) Modifier.focusRequester(firstFocus) else Modifier)
+                }
+                if (quality.size == 1) item {
+                    Text(t("Strömmen har bara en kvalitet", "The stream has only one quality"), fontSize = 14.sp, color = Palette.Faint, modifier = Modifier.padding(start = 14.dp, top = 4.dp))
+                }
+            }
+        }
+    }
+}
+
+/** Tillbaka stänger panelen direkt (annars tar första trycket bara bort fokus). */
+private fun Modifier.closeOnBack(onClose: () -> Unit) = onPreviewKeyEvent {
+    if (it.key != Key.Back) return@onPreviewKeyEvent false
+    if (it.type == KeyEventType.KeyUp) onClose()
+    true
 }
 
 @Composable

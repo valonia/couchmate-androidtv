@@ -95,6 +95,8 @@ data class Media(
     val url: String,
     val seriesId: String? = null,
     val live: Boolean = false,
+    /** Källan har livechatt (t.ex. Twitch). */
+    val chat: Boolean = false,
 ) {
     val key get() = "$type:$id"
     /** TV-kanaler och liveströmmar från plugin-källor. */
@@ -169,6 +171,9 @@ fun formatTime(sec: Double): String {
     return if (h > 0) "%d:%02d:%02d".format(h, m, r) else "%d:%02d".format(m, r)
 }
 
+/** Ett chattmeddelande från en livestream (t.ex. Twitch). */
+data class ChatMsg(val user: String, val color: String?, val text: String)
+
 class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("synctv", Context.MODE_PRIVATE)
 
@@ -189,6 +194,14 @@ class Prefs(context: Context) {
     var audioLang: String
         get() = sp.getString("audioLang", "") ?: ""
         set(v) = sp.edit().putString("audioLang", v).apply()
+
+    /** Livestreams (t.ex. Twitch): visa chatten, och vald kvalitet (höjd i pixlar, 0 = automatisk). */
+    var chatOn: Boolean
+        get() = sp.getBoolean("chatOn", false)
+        set(v) = sp.edit().putBoolean("chatOn", v).apply()
+    var streamHeight: Int
+        get() = sp.getInt("streamHeight", 0)
+        set(v) = sp.edit().putInt("streamHeight", v).apply()
 
     /** Språk: "auto" (följer TV:n), "sv" eller "en". */
     var language: String
