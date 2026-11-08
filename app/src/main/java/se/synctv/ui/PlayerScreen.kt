@@ -260,10 +260,11 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
                 if (anyPanel) return@onKeyEvent false // panelerna sköter sig själva
                 if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false
                 val firstPress = ev.nativeKeyEvent.repeatCount == 0
-                // Livestream: OK/▶/▼ = kvalitet & chatt, ◀ = visa/dölj chatten.
+                // Livestream: OK = paus/spela, ▼/▶ = kvalitet & chatt, ◀ = visa/dölj chatten.
                 if (stream && sync.state.value?.reminder == null) {
                     when (ev.key) {
-                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.DirectionRight, Key.DirectionDown -> { if (firstPress) streamPanel = true; return@onKeyEvent true }
+                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> { if (firstPress) { sync.toggle(); poke() }; return@onKeyEvent true }
+                        Key.DirectionRight, Key.DirectionDown -> { if (firstPress) streamPanel = true; return@onKeyEvent true }
                         Key.DirectionLeft -> { if (firstPress) { if (media?.chat == true) toggleChat() else streamPanel = true }; return@onKeyEvent true }
                         Key.DirectionUp -> { poke(); return@onKeyEvent true }
                         else -> Unit
@@ -513,7 +514,7 @@ private fun StreamOverlay(
                 if (status.isNotEmpty()) Text(status, fontSize = 14.sp, color = Color(0xFF9FB4FF))
                 Spacer(Modifier.weight(1f))
                 val chatHint = if (!hasChat) "" else if (chatOn) t("◀  dölj chatt   ·   ", "◀  hide chat   ·   ") else t("◀  visa chatt   ·   ", "◀  show chat   ·   ")
-                Text(chatHint + t("OK  kvalitet & chatt   ·   ⏯  paus   ·   Tillbaka  meny", "OK  quality & chat   ·   ⏯  pause   ·   Back  menu"), fontSize = 13.sp, color = Palette.Faint)
+                Text(chatHint + t("▼  kvalitet & chatt   ·   OK  paus/spela   ·   Tillbaka  meny", "▼  quality & chat   ·   OK  pause/play   ·   Back  menu"), fontSize = 13.sp, color = Palette.Faint)
             }
         }
     }
