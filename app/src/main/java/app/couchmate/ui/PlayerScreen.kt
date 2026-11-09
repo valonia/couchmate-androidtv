@@ -486,7 +486,7 @@ private fun keyHints(spec: PlayerSpec, media: Media, chatOn: Boolean, hasChannel
     val merged = LinkedHashMap<String, MutableList<String>>()
     for ((k, glyph) in glyphs) {
         val label = when (spec.keys[k]) {
-            "pause" -> tr("pause/play")
+            "pause" -> tr("play or pause")
             "settings" -> tr("settings")
             "chat" -> if (media.chat) (if (chatOn) tr("hide chat") else tr("show chat")) else null
             "channels" -> if (hasChannels) tr("channel list") else null
@@ -496,7 +496,7 @@ private fun keyHints(spec: PlayerSpec, media: Media, chatOn: Boolean, hasChannel
         } ?: continue
         merged.getOrPut(label) { mutableListOf() } += glyph
     }
-    return (merged.map { (label, keys) -> "${keys.joinToString("")}  $label" } + tr("Back  menu")).joinToString("   ·   ")
+    return (merged.map { (label, keys) -> "${keys.joinToString("")}  $label" } + (tr("Back") + "  " + tr("menu"))).joinToString("   ·   ")
 }
 
 @Composable
@@ -529,10 +529,10 @@ private fun StatusChip(text: String, modifier: Modifier = Modifier) {
 
 /** "Bob paused" – who did what, for the top strip. */
 private fun actionText(who: String, a: String?) = when (a) {
-    "load" -> tr("{name} started", "name" to who)
+    "load" -> tr("{name} started the video", "name" to who)
     "play", "start" -> tr("{name} pressed play", "name" to who)
-    "pause" -> tr("{name} paused", "name" to who)
-    "seek" -> tr("{name} skipped", "name" to who)
+    "pause" -> tr("{name} paused the video", "name" to who)
+    "seek" -> tr("{name} skipped forward in the video", "name" to who)
     else -> null
 }
 

@@ -52,6 +52,8 @@ class SyncClient(
     val reminders = MutableStateFlow<List<Reminder>>(emptyList())
     /** Counts up when the server says the menu changed (plugins, order). */
     val menuVersion = MutableStateFlow(0)
+    /** Counts up when the server has new translations: the menu and the open view are fetched again. */
+    val textsVersion = MutableStateFlow(0)
     /** Counts up when the history changed (something started, removed, cleared). */
     val historyVersion = MutableStateFlow(0)
     /** Live chat for the stream that plays (only while it is shown). */
@@ -172,6 +174,7 @@ class SyncClient(
                 Member(m.optString("id"), m.optString("name"), m.optString("device"), m.optBoolean("watching"))
             }
             "menu_changed" -> menuVersion.value++
+            "texts_changed" -> { textsVersion.value++; menuVersion.value++ }
             "translations_changed" -> {
                 I18n.invalidate(o.optStringOrNull("lang"))
                 menuVersion.value++ // the menu's titles come translated from the server

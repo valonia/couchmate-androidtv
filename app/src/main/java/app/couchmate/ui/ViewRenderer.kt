@@ -107,6 +107,22 @@ data class ViewRef(val plugin: String, val id: String, val params: Map<String, S
     }
 }
 
+/**
+ * A view's state ("state" in the view, changed by "set" actions). Every key is its own Compose state, so a
+ * change only redraws the blocks that read that key – e.g. moving focus in the channel list (which sets
+ * "channel") redraws the guide, not the whole view.
+ */
+class ViewState {
+    private val values = HashMap<String, androidx.compose.runtime.MutableState<Any?>>()
+    private fun slot(key: String) = values.getOrPut(key) { androidx.compose.runtime.mutableStateOf(null) }
+    operator fun get(key: String): Any? = slot(key).value
+    operator fun set(key: String, value: Any?) { slot(key).value = value }
+    fun isEmpty() = values.isEmpty()
+    fun isNotEmpty() = values.isNotEmpty()
+    /** Every key and value (reading them all – for saving). */
+    fun toMap(): Map<String, Any?> = values.mapValues { it.value.value }
+}
+
 /** What the app knows that views can ask about ({{item.$favorite}}, {{player.position}} …). */
 class ViewEnv(
     val favorites: Map<String, Favorite>,
@@ -122,7 +138,7 @@ class ViewContext(
     val plugin: String,
     val api: Api,
     val sync: SyncClient,
-    val state: SnapshotStateMap<String, Any?>,
+    val state: ViewState,
     val roots: Map<String, Any?>,
     val env: ViewEnv,
     val open: (ViewRef) -> Unit,
@@ -138,11 +154,44 @@ class ViewContext(
 
 internal val BIND = Regex("\\{\\{\\s*(.+?)\\s*\\}\\}")
 
+/** A string with bindings, parsed once: literal text and expressions (each a list of "a || b" alternatives). */
+private class Template(val whole: List<String>?, val parts: List<Any>)
+
+private val templates = object : LinkedHashMap<String, Template>(512, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Template>?) = size > 4000
+}
+
+private fun template(s: String): Template = synchronized(templates) {
+    templates.getOrPut(s) {
+        val alts = { e: String -> e.split("||").map { it.trim() } }
+        val whole = BIND.matchEntire(s)?.let { alts(it.groupValues[1]) } // only "{{path}}" keeps the value's type
+        val parts = ArrayList<Any>()
+        var last = 0
+        for (m in BIND.findAll(s)) {
+            if (m.range.first > last) parts.add(s.substring(last, m.range.first))
+            parts.add(alts(m.groupValues[1]))
+            last = m.range.last + 1
+        }
+        if (last < s.length) parts.add(s.substring(last))
+        Template(whole, parts)
+    }
+}
+
 /** A value with its bindings filled in. A string that is only "{{path}}" keeps the value's type (object, list …). */
 fun ViewContext.value(v: Any?): Any? {
     if (v !is String || !v.contains("{{")) return if (v == JSONObject.NULL) null else v
-    BIND.matchEntire(v)?.let { return expr(it.groupValues[1]) } // only "{{path}}" (spaces around it are kept as text)
-    return BIND.replace(v) { text(expr(it.groupValues[1])) }
+    val t = template(v)
+    t.whole?.let { return first(it) }
+    val sb = StringBuilder()
+    @Suppress("UNCHECKED_CAST")
+    for (p in t.parts) if (p is String) sb.append(p) else sb.append(text(first(p as List<String>)))
+    return sb.toString()
+}
+
+/** The first alternative that is set. */
+private fun ViewContext.first(alts: List<String>): Any? {
+    for (a in alts) { val v = path(a); if (truthy(v)) return v }
+    return null
 }
 
 fun ViewContext.string(v: Any?): String = text(value(v))
@@ -166,23 +215,19 @@ fun truthy(v: Any?): Boolean = when (v) {
 }
 
 /** "a.b || c.d" – the first one that is set. */
-internal fun ViewContext.expr(e: String): Any? {
-    for (alt in e.split("||")) {
-        val v = path(alt.trim())
-        if (truthy(v)) return v
-    }
-    return null
-}
+internal fun ViewContext.expr(e: String): Any? = first(e.split("||").map { it.trim() })
 
 internal fun ViewContext.path(p: String): Any? {
     if (p.startsWith("'") && p.endsWith("'") && p.length >= 2) return p.substring(1, p.length - 1)
     val parts = p.split('.')
+    // state.x reads only the key x (so only blocks that use x are redrawn when it changes).
+    var start = 1
     var cur: Any? = when (parts[0]) {
         "item" -> item
-        "state" -> state
+        "state" -> { start = 2; parts.getOrNull(1)?.let { state[it] } }
         else -> roots[parts[0]]
     }
-    for (seg in parts.drop(1)) cur = child(cur, seg) ?: return null
+    for (i in start until parts.size) cur = child(cur, parts[i]) ?: return null
     return cur
 }
 

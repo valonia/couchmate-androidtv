@@ -182,7 +182,8 @@ internal fun ViewContext.ListBlock(node: JSONObject, modifier: Modifier, grid: B
     val channel = value(node.opt("channel")) as? JSONObject
     val listId = string(node.opt("id")).ifEmpty { "list" }
     val selected = string(node.opt("selected")).ifEmpty { null }
-    val initial = string(node.opt("initial")).ifEmpty { null }
+    // "initial" is only needed when focus enters the list – read then, so changing it does not redraw the list.
+    val initial = { string(node.opt("initial")).ifEmpty { null } }
     val gap = dpOf(node.opt("gap")) ?: 2.dp
     val content = paddingOf(node.opt("padding")) ?: PaddingValues(0.dp)
     // Lists and grids fill the width unless the view says otherwise.
@@ -206,11 +207,10 @@ internal fun ViewContext.ListBlock(node: JSONObject, modifier: Modifier, grid: B
     if (grid) {
         val state = rememberLazyGridState()
         val entry = rememberFocusEntry(state, listId)
-        val wanted = keys.indexOfFirst { it == initial || it == selected }.takeIf { it >= 0 }
         LazyVerticalGrid(
             columns = GridCells.Adaptive(dpOf(node.opt("minWidth")) ?: 120.dp),
             state = state,
-            modifier = m.focusEntry(entry) { arrayOf<Any?>(entry.last, wanted) },
+            modifier = m.focusEntry(entry) { val i = initial(); arrayOf<Any?>(entry.last, keys.indexOfFirst { it == i || it == selected }.takeIf { it >= 0 }) },
             contentPadding = content,
             horizontalArrangement = Arrangement.spacedBy(gap),
             verticalArrangement = Arrangement.spacedBy(dpOf(node.opt("rowGap")) ?: 16.dp),
@@ -244,7 +244,6 @@ internal fun ViewContext.ListBlock(node: JSONObject, modifier: Modifier, grid: B
     val indexOf = remember(shown) { shown.withIndex().associate { (i, o) -> System.identityHashCode(o) to i } }
     val state = rememberLazyListState()
     val entry = rememberFocusEntryByKey(state, listId)
-    val wanted: Any? = keys.firstOrNull { it == initial } ?: keys.firstOrNull { it == selected }
     val body: LazyListScope.() -> Unit = {
         itemsIndexed(entries, key = { n, o -> if (o is Heading) "h:${o.text}:$n" else keys[indexOf[System.identityHashCode(o)] ?: 0] }) { _, o ->
             if (o is Heading) {
@@ -262,7 +261,7 @@ internal fun ViewContext.ListBlock(node: JSONObject, modifier: Modifier, grid: B
             }
         }
     }
-    val listMod = m.focusEntry(entry) { arrayOf<Any?>(entry.last, wanted) }
+    val listMod = m.focusEntry(entry) { val i = initial(); arrayOf<Any?>(entry.last, keys.firstOrNull { it == i } ?: keys.firstOrNull { it == selected }) }
     if (node.optString("direction") == "horizontal") {
         LazyRow(state = state, modifier = listMod, contentPadding = content, horizontalArrangement = Arrangement.spacedBy(gap), content = body)
     } else {
@@ -361,13 +360,17 @@ fun ViewScreen(sync: SyncClient, api: Api, ref: ViewRef, open: (ViewRef) -> Unit
     var error by remember(ref.key) { mutableStateOf<String?>(null) }
     val saved = rememberSaveable(ref.key) { mutableStateOf<String?>(null) }
     val state = remember(ref.key) {
-        mutableStateMapOf<String, Any?>().also { m ->
+        ViewState().also { m ->
             saved.value?.let { s -> runCatching { JSONObject(s).let { o -> for (k in o.keys()) m[k] = unwrap(o.opt(k)) } } }
         }
     }
     val restored = remember(ref.key) { state.isNotEmpty() }
-    LaunchedEffect(ref.key) {
-        var first = true
+    // New translations on the server: fetch the view again (its state is kept).
+    val texts by sync.textsVersion.collectAsState()
+    var firstLoad by remember(ref.key) { mutableStateOf(true) }
+    LaunchedEffect(ref.key, texts) {
+        var first = firstLoad
+        firstLoad = false
         while (true) {
             try {
                 val v = api.view(ref.plugin, ref.id, ref.params)
@@ -422,7 +425,7 @@ fun ViewHost(sync: SyncClient, api: Api, root: ViewRef, onExit: (() -> Unit)? = 
 /** A plugin's overlay on top of the video, bound to {{media}}, {{player}} and the app's top strip ("topbar"). */
 @Composable
 fun PluginOverlay(sync: SyncClient, api: Api, plugin: String, node: JSONObject, media: JSONObject, player: JSONObject, topbar: @Composable () -> Unit) {
-    val state = remember { mutableStateMapOf<String, Any?>() }
+    val state = remember { ViewState() }
     val env = rememberEnv(sync, 15_000, topbar)
     val ctx = ViewContext(plugin, api, sync, state, mapOf("media" to media, "player" to player), env, open = {}, back = {})
     ctx.Block(node, Modifier.fillMaxSize())

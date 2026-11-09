@@ -62,7 +62,7 @@ private fun remaining(e: HistoryEntry): String? {
     val d = e.duration ?: return null
     if (e.finished) return tr("Watched")
     val min = ((d - e.position) / 60).toInt().coerceAtLeast(1)
-    return if (min >= 60) tr("{h} h {m} min left", "h" to min / 60, "m" to min % 60) else tr("{m} min left", "m" to min)
+    return if (min >= 60) tr("{h} h {m} min remaining", "h" to min / 60, "m" to min % 60) else tr("{m} min remaining", "m" to min)
 }
 
 /** The room's shared history – what you watched, who started it and where you stopped. */
@@ -170,7 +170,7 @@ private fun HistoryRow(
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        listOfNotNull(e.startedBy?.let { tr("Started by {name}", "name" to it) }, whenText(e.lastAt)).joinToString("  ·  "),
+                        listOfNotNull(e.startedBy?.let { tr("{name} started it", "name" to it) }, whenText(e.lastAt)).joinToString("  ·  "),
                         fontSize = 13.sp,
                         color = Color(0x99FFFFFF),
                     )

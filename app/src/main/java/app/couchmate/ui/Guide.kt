@@ -124,7 +124,7 @@ fun ChannelGuide(item: Item?, shortEpg: List<Program>?, now: Long, api: Api, syn
         if (showHints) {
             Spacer(Modifier.height(8.dp))
             Text(tr("→  guide   ·   OK on a programme  –  reminder"), fontSize = 13.sp, color = Palette.Faint)
-            Text(tr("OK on a channel  –  watch   ·   Hold OK  –  favorite"), fontSize = 13.sp, color = Palette.Faint)
+            Text(tr("OK on a channel  –  play   ·   Hold OK  –  favorite"), fontSize = 13.sp, color = Palette.Faint)
         }
     }
 }

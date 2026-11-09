@@ -18,7 +18,10 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 shrinks and optimises the code – Compose is much faster in a release build than in debug.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // Signed with the debug key so the release APK can be sideloaded straight away.
             signingConfig = signingConfigs.getByName("debug")
         }
@@ -53,4 +56,6 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // Installs the libraries' baseline profiles, so Compose is compiled ahead of time on the TV (smoother from the start).
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
 }
