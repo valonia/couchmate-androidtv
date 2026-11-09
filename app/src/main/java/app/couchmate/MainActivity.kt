@@ -63,22 +63,21 @@ fun CouchmateTheme(content: @Composable () -> Unit) {
 @Composable
 fun App(prefs: Prefs) {
     var configured by remember { mutableStateOf(prefs.isConfigured) }
-    // What played last time we watched – so we do not jump into the player again when coming back from Settings.
+    // Counts up when the server, PIN or name changes in Settings – the room is then connected again.
+    var connection by remember { mutableStateOf(0) }
+    // What played last time we watched – so we do not jump into the player again after reconnecting.
     var seenMedia by remember { mutableStateOf<String?>(null) }
     if (!configured) {
-        // Back/Cancel returns to the menu – except the first time, when there is nothing to return to.
-        SetupScreen(
-            prefs,
-            onDone = { configured = true },
-            onCancel = if (prefs.isConfigured) ({ configured = true }) else null,
-        )
+        SetupScreen(prefs, onDone = { configured = true })
     } else {
-        Room(prefs, seenMedia = seenMedia, onSeen = { seenMedia = it }, onSettings = { configured = false })
+        androidx.compose.runtime.key(connection) {
+            Room(prefs, seenMedia = seenMedia, onSeen = { seenMedia = it }, onReconnect = { connection++ })
+        }
     }
 }
 
 @Composable
-fun Room(prefs: Prefs, seenMedia: String?, onSeen: (String?) -> Unit, onSettings: () -> Unit) {
+fun Room(prefs: Prefs, seenMedia: String?, onSeen: (String?) -> Unit, onReconnect: () -> Unit) {
     val api = remember { Api(prefs.serverUrl, prefs.pin) }
     val sync = remember { SyncClient(api, prefs.serverUrl, prefs.pin, prefs.name, Build.MODEL ?: "Android TV") }
 
@@ -132,7 +131,7 @@ fun Room(prefs: Prefs, seenMedia: String?, onSeen: (String?) -> Unit, onSettings
         saved.SaveableStateProvider("browse") {
             val focusMemory = rememberSaveable { mutableStateOf<String?>(null) }
             CompositionLocalProvider(LocalFocusMemory provides focusMemory) {
-                BrowseScreen(sync, api, onOpenPlayer = { inPlayer = true }, onSettings = onSettings)
+                BrowseScreen(sync, api, prefs, onOpenPlayer = { inPlayer = true }, onReconnect = onReconnect)
             }
         }
     }

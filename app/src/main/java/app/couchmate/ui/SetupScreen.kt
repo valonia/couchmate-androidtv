@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -68,53 +69,15 @@ import app.couchmate.normalizeUrl
 import app.couchmate.tr
 
 /**
- * Settings: server, PIN, name and language.
- * [onCancel] = null the first time (nothing to go back to); otherwise Back/Cancel takes you to the menu.
+ * The first start: logo on the left, the settings form on the right. After that, Settings opens as a popup
+ * on top of the menu instead ([SettingsDialog]), so the app stays connected to the room.
  */
 @Composable
-fun SetupScreen(prefs: Prefs, onDone: () -> Unit, onCancel: (() -> Unit)? = null) {
-    var server by remember { mutableStateOf(prefs.serverUrl) }
-    var pin by remember { mutableStateOf(prefs.pin) }
-    var name by remember { mutableStateOf(prefs.name) }
-    var language by remember { mutableStateOf(prefs.language) }
-    var status by remember { mutableStateOf<String?>(null) }
-    var testing by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-    val firstFocus = remember { FocusRequester() }
-    val context = LocalContext.current
-
-    BackHandler(enabled = onCancel != null) { onCancel?.invoke() }
-
-    // Start on "Save" if everything is filled in (so the keyboard does not pop up), otherwise on the server address.
-    LaunchedEffect(Unit) { delay(120); runCatching { firstFocus.requestFocus() } }
-
-    fun save() {
-        testing = true
-        status = null
-        scope.launch {
-            val url = normalizeUrl(server)
-            try {
-                val api = Api(url, pin.trim())
-                val info = api.info()
-                if (!info.ready) throw Exception(tr("The server is not set up yet. Set a PIN code in the admin panel."))
-                api.auth()
-                prefs.serverUrl = url
-                prefs.pin = pin.trim()
-                prefs.name = name.trim()
-                onDone()
-            } catch (e: Exception) {
-                status = tr("Could not connect: {message}", "message" to e.message)
-            } finally {
-                testing = false
-            }
-        }
-    }
-
+fun SetupScreen(prefs: Prefs, onDone: () -> Unit) {
     Row(
         Modifier.fillMaxSize().background(Palette.Bg).padding(horizontal = 56.dp, vertical = 44.dp),
         horizontalArrangement = Arrangement.spacedBy(48.dp),
     ) {
-        // ---------------------------------------------------------- left: logo + status
         Column(Modifier.width(300.dp).fillMaxHeight()) {
             Row {
                 Text("Couch", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = Palette.Text)
@@ -127,81 +90,134 @@ fun SetupScreen(prefs: Prefs, onDone: () -> Unit, onCancel: (() -> Unit)? = null
                 tr("Watch together with your friends, perfectly in sync. Everyone connected to the same server ends up in the same room."),
                 fontSize = 15.sp, color = Palette.Dim, lineHeight = 22.sp,
             )
-            Spacer(Modifier.weight(1f))
-            if (prefs.isConfigured) {
-                Column(
-                    Modifier.fillMaxWidth().background(Palette.Panel, RoundedCornerShape(12.dp)).padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(8.dp).background(Color(0xFF3DD68C), CircleShape))
-                        Spacer(Modifier.width(8.dp))
-                        Text(tr("Saved server"), fontSize = 13.sp, color = Palette.Faint, fontWeight = FontWeight.Bold)
-                    }
-                    Text(prefs.serverUrl.removePrefix("http://").removePrefix("https://"), fontSize = 15.sp, color = Palette.Text)
-                    Text(tr("Signed in as {name}", "name" to prefs.name), fontSize = 14.sp, color = Palette.Dim)
-                }
-                Spacer(Modifier.height(12.dp))
-                Text(tr("Back  –  return to the menu without saving"), fontSize = 13.sp, color = Palette.Faint)
+        }
+        SettingsForm(
+            prefs, onSaved = { onDone() }, onCancel = null,
+            modifier = Modifier.weight(1f).fillMaxHeight().background(Palette.Panel, RoundedCornerShape(16.dp)),
+        )
+    }
+}
+
+/**
+ * Settings as a popup on top of the menu. Changing the server, PIN or name reconnects ([onReconnect]);
+ * the language changes straight away. Back or Cancel closes it.
+ */
+@Composable
+fun SettingsDialog(prefs: Prefs, onClose: () -> Unit, onReconnect: () -> Unit, onLanguage: () -> Unit) {
+    BackHandler { onClose() }
+    Box(Modifier.fillMaxSize().background(Color(0xB3000000)), contentAlignment = Alignment.Center) {
+        SettingsForm(
+            prefs,
+            onSaved = { changed -> if (changed) onReconnect() else onClose() },
+            onCancel = onClose,
+            onLanguage = onLanguage,
+            title = tr("Settings"),
+            modifier = Modifier.width(900.dp).heightIn(max = 640.dp)
+                .background(Palette.Panel, RoundedCornerShape(18.dp))
+                .border(1.dp, Palette.Line, RoundedCornerShape(18.dp)),
+        )
+    }
+}
+
+/** The form itself: server, PIN, name and language. [onSaved] gets whether the connection changed. */
+@Composable
+private fun SettingsForm(
+    prefs: Prefs,
+    onSaved: (connectionChanged: Boolean) -> Unit,
+    onCancel: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+    onLanguage: () -> Unit = {},
+    title: String? = null,
+) {
+    var server by remember { mutableStateOf(prefs.serverUrl) }
+    var pin by remember { mutableStateOf(prefs.pin) }
+    var name by remember { mutableStateOf(prefs.name) }
+    var language by remember { mutableStateOf(prefs.language) }
+    var status by remember { mutableStateOf<String?>(null) }
+    var testing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val firstFocus = remember { FocusRequester() }
+    val context = LocalContext.current
+
+    // Start on "Save" if everything is filled in (so the keyboard does not pop up), otherwise on the server address.
+    LaunchedEffect(Unit) { delay(120); runCatching { firstFocus.requestFocus() } }
+
+    fun save() {
+        val url = normalizeUrl(server)
+        val changed = url != prefs.serverUrl || pin.trim() != prefs.pin || name.trim() != prefs.name
+        if (!changed && prefs.isConfigured) { onSaved(false); return }
+        testing = true
+        status = null
+        scope.launch {
+            try {
+                val api = Api(url, pin.trim())
+                val info = api.info()
+                if (!info.ready) throw Exception(tr("The server is not set up yet. Set a PIN code in the admin panel."))
+                api.auth()
+                prefs.serverUrl = url
+                prefs.pin = pin.trim()
+                prefs.name = name.trim()
+                onSaved(true)
+            } catch (e: Exception) {
+                status = tr("Could not connect: {message}", "message" to e.message)
+            } finally {
+                testing = false
+            }
+        }
+    }
+
+    Column(
+        modifier.verticalScroll(rememberScrollState()).padding(horizontal = 36.dp, vertical = 30.dp),
+        verticalArrangement = Arrangement.spacedBy(28.dp),
+    ) {
+        if (title != null) Text(title, fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Palette.Text)
+
+        SettingsSection(
+            tr("Connection"),
+            tr("The address of your {app} server and the PIN code you were given.", "app" to APP_NAME),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Field(
+                    tr("Server address"), server, tr("e.g. 192.168.1.10:8787"),
+                    KeyboardType.Uri, Modifier.weight(2f).then(if (!prefs.isConfigured) Modifier.focusRequester(firstFocus) else Modifier),
+                ) { server = it }
+                Field(tr("PIN code"), pin, "••••", KeyboardType.Password, Modifier.weight(1f), password = true) { pin = it }
             }
         }
 
-        // ---------------------------------------------------------- right: the form
-        Column(
-            Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .background(Palette.Panel, RoundedCornerShape(16.dp))
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 36.dp, vertical = 30.dp),
-            verticalArrangement = Arrangement.spacedBy(30.dp),
-        ) {
-            SettingsSection(
-                tr("Connection"),
-                tr("The address of your {app} server and the PIN code you were given.", "app" to APP_NAME),
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Field(
-                        tr("Server address"), server, tr("e.g. 192.168.1.10:8787"),
-                        KeyboardType.Uri, Modifier.weight(2f).then(if (!prefs.isConfigured) Modifier.focusRequester(firstFocus) else Modifier),
-                    ) { server = it }
-                    Field(tr("PIN code"), pin, "••••", KeyboardType.Password, Modifier.weight(1f), password = true) { pin = it }
+        SettingsSection(tr("Profile"), tr("The name the others see when you join.")) {
+            Field(tr("Your name"), name, tr("e.g. Bob"), KeyboardType.Text, Modifier.fillMaxWidth(0.6f)) { name = it }
+        }
+
+        SettingsSection(tr("Language"), tr("Menus and buttons in the TV's language, translated by the server. Applies only on this TV.")) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                val system = java.util.Locale.getDefault().let { it.getDisplayLanguage(it).replaceFirstChar { c -> c.uppercase(it) } }
+                listOf(
+                    "auto" to tr("Same as the TV ({language})", "language" to system),
+                    "en" to "English",
+                ).forEach { (code, label) ->
+                    Pill(label, selected = language == code, onClick = {
+                        language = code
+                        prefs.language = code
+                        I18n.configure(context, code)
+                        onLanguage()
+                    })
                 }
             }
+        }
 
-            SettingsSection(tr("Profile"), tr("The name the others see when you join.")) {
-                Field(tr("Your name"), name, tr("e.g. Bob"), KeyboardType.Text, Modifier.fillMaxWidth(0.6f)) { name = it }
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                ActionButton(
+                    text = if (testing) tr("Connecting…") else if (prefs.isConfigured) tr("Save") else tr("Connect"),
+                    primary = true,
+                    enabled = !testing && server.isNotBlank() && name.isNotBlank(),
+                    onClick = { save() },
+                    modifier = if (prefs.isConfigured) Modifier.focusRequester(firstFocus) else Modifier,
+                )
+                onCancel?.let { ActionButton(tr("Cancel"), primary = false, onClick = it) }
             }
-
-            SettingsSection(tr("Language"), tr("Menus and buttons in the TV's language, translated by the server. Applies only on this TV.")) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    val system = java.util.Locale.getDefault().let { it.getDisplayLanguage(it).replaceFirstChar { c -> c.uppercase(it) } }
-                    listOf(
-                        "auto" to tr("Same as the TV ({language})", "language" to system),
-                        "en" to "English",
-                    ).forEach { (code, label) ->
-                        Pill(label, selected = language == code, onClick = {
-                            language = code
-                            prefs.language = code
-                            I18n.configure(context, code)
-                        })
-                    }
-                }
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    ActionButton(
-                        text = if (testing) tr("Connecting…") else if (prefs.isConfigured) tr("Save") else tr("Connect"),
-                        primary = true,
-                        enabled = !testing && server.isNotBlank() && name.isNotBlank(),
-                        onClick = { save() },
-                        modifier = if (prefs.isConfigured) Modifier.focusRequester(firstFocus) else Modifier,
-                    )
-                    onCancel?.let { ActionButton(tr("Cancel"), primary = false, onClick = it) }
-                }
-                status?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 15.sp) }
-            }
+            status?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 15.sp) }
         }
     }
 }

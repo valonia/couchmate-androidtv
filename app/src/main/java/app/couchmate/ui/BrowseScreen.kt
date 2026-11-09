@@ -44,7 +44,7 @@ import app.couchmate.tr
 import kotlinx.coroutines.delay
 
 @Composable
-fun BrowseScreen(sync: SyncClient, api: Api, onOpenPlayer: () -> Unit, onSettings: () -> Unit) {
+fun BrowseScreen(sync: SyncClient, api: Api, prefs: app.couchmate.Prefs, onOpenPlayer: () -> Unit, onReconnect: () -> Unit) {
     val state by sync.state.collectAsState()
     val members by sync.members.collectAsState()
     val connected by sync.connected.collectAsState()
@@ -76,12 +76,14 @@ fun BrowseScreen(sync: SyncClient, api: Api, onOpenPlayer: () -> Unit, onSetting
 
     var showMembers by remember { mutableStateOf(false) }
     BackHandler(enabled = showMembers) { showMembers = false }
+    // Settings open as a popup on top of the menu (the app stays connected).
+    var showSettings by remember { mutableStateOf(false) }
 
     // Back in the content: one step closer to the menu (e.g. guide → channels → groups → menu).
     // In the menu itself the app closes (the system's normal Back).
     var railFocused by remember { mutableStateOf(false) }
     val rootView = LocalView.current
-    BackHandler(enabled = !railFocused && !showMembers) {
+    BackHandler(enabled = !railFocused && !showMembers && !showSettings) {
         // The same as pressing left on the remote; if that does nothing, jump straight to the menu.
         val down = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_DPAD_LEFT)
         val up = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_DPAD_LEFT)
@@ -100,7 +102,7 @@ fun BrowseScreen(sync: SyncClient, api: Api, onOpenPlayer: () -> Unit, onSetting
                 media = state?.media,
                 onOpenPlayer = onOpenPlayer,
                 onStop = { sync.stopPlayback() },
-                onSettings = onSettings,
+                onSettings = { showSettings = true },
                 connected = connected,
                 members = members,
                 error = syncError,
@@ -138,6 +140,15 @@ fun BrowseScreen(sync: SyncClient, api: Api, onOpenPlayer: () -> Unit, onSetting
             )
         }
         NoticeToast(sync, Modifier.align(Alignment.TopCenter).padding(top = 24.dp))
+        if (showSettings) {
+            SettingsDialog(
+                prefs,
+                onClose = { showSettings = false; runCatching { firstFocus.requestFocus() } },
+                onReconnect = { showSettings = false; onReconnect() },
+                // The language changed: tell the server and reload the menu, both come translated.
+                onLanguage = { sync.languageChanged(); sync.menuVersion.value++ },
+            )
+        }
     }
 }
 

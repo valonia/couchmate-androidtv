@@ -89,11 +89,12 @@ object I18n {
             for (t in batch) {
                 val v = translations[t]
                 if (v != null && (complete || v != t)) dict[t] = v
-                else synchronized(pending) { if ((tries.merge(t, 1, Int::plus) ?: 0) < 6) retry += t }
+                else synchronized(pending) { if ((tries.merge(t, 1, Int::plus) ?: 0) < 20) retry += t }
             }
             save(l)
             if (retry.isNotEmpty()) {
-                delay(20_000)
+                // The server translates in the background (≈ 0.1 s a text) – ask again soon.
+                delay(3_000)
                 synchronized(pending) { pending.addAll(retry) }
             }
         }
