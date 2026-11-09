@@ -49,6 +49,14 @@ object I18n {
         lang = l
     }
 
+    /** A translation was corrected on the server: forget what this TV kept and ask again. */
+    fun invalidate(language: String?) {
+        if (language != null && language != lang) return
+        synchronized(pending) { pending.clear(); tries.clear() }
+        dict.clear()
+        lang?.let { prefs?.edit()?.remove(it)?.apply() }
+    }
+
     /** Locale for dates and language names. */
     val locale: Locale get() = lang?.let { Locale(it) } ?: Locale.ENGLISH
 

@@ -172,6 +172,10 @@ class SyncClient(
                 Member(m.optString("id"), m.optString("name"), m.optString("device"), m.optBoolean("watching"))
             }
             "menu_changed" -> menuVersion.value++
+            "translations_changed" -> {
+                I18n.invalidate(o.optStringOrNull("lang"))
+                menuVersion.value++ // the menu's titles come translated from the server
+            }
             "history_changed" -> historyVersion.value++
             "notice" -> o.optStringOrNull("text")?.let { notice.value = System.currentTimeMillis() to it }
             "error" -> o.optStringOrNull("text")?.let { notice.value = System.currentTimeMillis() to it }
