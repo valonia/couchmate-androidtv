@@ -31,6 +31,8 @@ data class Item(
     val badge: String? = null,
     val duration: Double? = null,
     val favorite: Boolean = true,
+    /** Shown but cannot be played (e.g. a song that was not found): greyed out and skipped. */
+    val unavailable: Boolean = false,
 ) {
     val key get() = "$plugin:$id"
     val opens get() = action == "open"
@@ -85,8 +87,20 @@ data class Favorite(
     val addedBy: String?,
     val newCount: Int,
     val newLabel: String?,
+    /** How many watch right now (live channels, kept up to date by the plugin). */
+    val viewers: Int? = null,
+    /** The group it shows under on the Favorites screen – named by its plugin (or the usual one for its kind). */
+    val group: FavGroup = FavGroup.OTHER,
 ) {
-    fun toItem() = Item(plugin, id, title, subtitle, image, kind = kind, action = action, view = view, live = live)
+    fun toItem() = Item(plugin, id, title, subtitle, image, kind = kind, action = action, view = view, live = live, viewers = viewers)
+}
+
+/**
+ * A group on the Favorites screen. style: "poster" (tall covers), "landscape" (16:9 cards) or "guide"
+ * (TV channels: a row with what is on now). Lower [order] comes first.
+ */
+data class FavGroup(val id: String, val title: String, val order: Double, val style: String) {
+    companion object { val OTHER = FavGroup("other", "Other", 99.0, "landscape") }
 }
 
 /** "Switch to this channel when the programme starts" – shared by the room. */
@@ -109,7 +123,10 @@ fun reminderKey(plugin: String, channelId: String, start: Long) = "$plugin:$chan
  * settings: the boxes in the settings panel (quality, chat, audio, subtitles, choice, actions).
  * channels: the plugin lists channels to zap between. guide: it has programme info for the overlay.
  */
-data class PlayerSpec(val keys: Map<String, String>, val settings: List<SpecSection>, val channels: Boolean, val guide: Boolean, val overlay: JSONObject? = null)
+data class PlayerSpec(val keys: Map<String, String>, val settings: List<SpecSection>, val channels: Boolean, val guide: Boolean, val overlay: JSONObject? = null, val queue: Boolean = false)
+
+/** What plays next (the plugin's data('queue')): [current] is the item playing now. */
+data class Queue(val title: String?, val current: String?, val items: List<Item>)
 data class SpecSection(val id: String, val type: String, val title: String?, val options: List<SpecOption> = emptyList(), val default: String? = null)
 data class SpecOption(val id: String, val label: String)
 
@@ -124,6 +141,8 @@ data class Media(
     val url: String,
     /** "hls" or "file" – the address has no file extension, so the player needs to be told. */
     val type: String,
+    /** The video has a separate audio file (same address with part=audio) that plays together with it. */
+    val audio: Boolean = false,
     val chat: Boolean,
     val player: PlayerSpec?,
 ) {
@@ -135,7 +154,14 @@ data class Media(
 }
 
 /** "Next episode", starting by itself at [startsAt] (server clock, ms). */
-data class UpNext(val item: Item, val startsAt: Long)
+data class UpNext(
+    val item: Item,
+    val startsAt: Long,
+    /** Shown before the end (music): the next one follows straight on when this one ends. */
+    val early: Boolean = false,
+    /** The next one's stream, ready in advance – the player buffers it so the switch is seamless. */
+    val media: Media? = null,
+)
 
 /** A reminder that is about to switch everyone at [switchAt] (server clock, ms). */
 data class PendingReminder(val key: String, val title: String, val start: Long, val channelTitle: String, val channelImage: String?, val switchAt: Long)
@@ -151,7 +177,11 @@ data class RoomState(
     val action: String?,
     val upNext: UpNext? = null,
     val reminder: PendingReminder? = null,
+    /** Music: what follows, told early (before the card) so the player can start buffering it. */
+    val preparedNext: PreparedNext? = null,
 )
+
+data class PreparedNext(val item: Item, val media: Media)
 
 data class Member(val id: String, val name: String, val device: String, val watching: Boolean)
 
@@ -194,6 +224,7 @@ fun parseItem(o: JSONObject, pluginFallback: String? = null): Item? {
         genre = o.optStringOrNull("genre"),
         rating = o.optDoubleOrNull("rating"),
         badge = o.optStringOrNull("badge"),
+        unavailable = o.optBoolean("unavailable"),
         duration = o.optDoubleOrNull("duration"),
         favorite = o.optBoolean("favorite", true),
     )

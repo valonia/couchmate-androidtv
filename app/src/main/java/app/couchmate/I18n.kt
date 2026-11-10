@@ -57,6 +57,20 @@ object I18n {
         lang?.let { prefs?.edit()?.remove(it)?.apply() }
     }
 
+    /**
+     * The server's fingerprint of its corrected texts. If it differs from the one this TV last saw, the
+     * kept translations are thrown away (they may be outdated). Returns true if they were.
+     */
+    fun checkVersion(language: String?, version: String): Boolean {
+        val l = lang ?: return false
+        if (language != l || version.isEmpty()) return false
+        val key = "version:$l"
+        if (prefs?.getString(key, null) == version) return false
+        invalidate(l)
+        prefs?.edit()?.putString(key, version)?.apply()
+        return true
+    }
+
     /** Locale for dates and language names. */
     val locale: Locale get() = lang?.let { Locale(it) } ?: Locale.ENGLISH
 

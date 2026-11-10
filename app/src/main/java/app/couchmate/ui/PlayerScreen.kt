@@ -40,6 +40,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
@@ -78,6 +79,7 @@ import app.couchmate.Media
 import app.couchmate.Member
 import app.couchmate.PlaybackSync
 import app.couchmate.PlayerSpec
+import app.couchmate.Queue
 import app.couchmate.Prefs
 import app.couchmate.Program
 import app.couchmate.RoomState
@@ -251,15 +253,37 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
     // ---- panels on top of the video
     var panelOpen by remember { mutableStateOf(false) }
     var settingsPanel by remember { mutableStateOf(false) }
+    // The queue: what plays next (when the plugin has one), in a column to the right – like the chat.
+    var queueOpen by remember { mutableStateOf(false) }
+    var queue by remember { mutableStateOf<Queue?>(null) }
+    // What was picked in the queue, until it plays.
+    var starting by remember { mutableStateOf<Item?>(null) }
+    var startingFrom by remember { mutableStateOf(0) } // the room's version when it was picked
+    LaunchedEffect(starting) { if (starting != null) { delay(30_000); starting = null } }
+    LaunchedEffect(state?.media?.key, state?.paused, state?.waiting) {
+        val s = starting ?: return@LaunchedEffect
+        val stNow = state ?: return@LaunchedEffect
+        val m = stNow.media
+        if (m != null && m.key != s.key && stNow.action == "load" && stNow.version > startingFrom) starting = null // something else was started
+        if (m?.key == s.key && !stNow.paused && !stNow.waiting) starting = null
+    }
+    LaunchedEffect(media?.key, spec.queue) {
+        val m = media
+        queue = null
+        if (m == null || !spec.queue) { queueOpen = false; return@LaunchedEffect }
+        queue = runCatching { api.queue(m.plugin, m.id) }.getOrNull()
+        if (queue?.items.isNullOrEmpty()) queueOpen = false
+    }
     val rootFocus = remember { FocusRequester() }
-    LaunchedEffect(panelOpen, settingsPanel) {
-        if (!panelOpen && !settingsPanel) { delay(50); runCatching { rootFocus.requestFocus() } }
+    LaunchedEffect(panelOpen, settingsPanel, queueOpen) {
+        if (!panelOpen && !settingsPanel && !queueOpen) { delay(50); runCatching { rootFocus.requestFocus() } }
     }
 
     BackHandler {
         when {
             settingsPanel -> settingsPanel = false
             panelOpen -> panelOpen = false
+            queueOpen -> queueOpen = false
             state?.reminder != null -> sync.reminderCancel() // Back cancels the reminder for everyone
             state?.upNext != null -> sync.nextCancel() // Back cancels "next episode" for everyone
             else -> onExit()
@@ -277,17 +301,29 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
             "channel_down" -> if (firstPress) zap(1)
             "seek_back" -> nudge(-10.0)
             "seek_forward" -> nudge(10.0)
+            // Nothing queued (e.g. a single video): the overlay instead.
+            "queue" -> if (firstPress) {
+                // Fetched again on every press – the plugin may have something new (e.g. autoplay switched on).
+                if (!queue?.items.isNullOrEmpty()) queueOpen = true
+                val m = media
+                if (m != null && spec.queue) scope.launch {
+                    val fresh = runCatching { api.queue(m.plugin, m.id) }.getOrNull()
+                    if (fresh != null && sync.state.value?.media?.key == m.key) queue = fresh
+                    if (queue?.items.isNullOrEmpty()) { queueOpen = false; poke() } else queueOpen = true
+                } else if (queue?.items.isNullOrEmpty()) poke()
+            }
             else -> poke()
         }
     }
 
     val st = state
-    val anyPanel = panelOpen || settingsPanel
+    val anyPanel = panelOpen || settingsPanel || queueOpen
     val showOverlay = !anyPanel && (now < overlayUntil || st?.paused == true || pendingSeek != null)
-    val chatWidth = if (chatVisible) 400.dp else 0.dp
+    // The column to the right of the video: the queue while it is open, otherwise the chat.
+    val chatWidth = when { queueOpen -> 460.dp; chatVisible -> 400.dp; else -> 0.dp }
     // The video surface does not always redraw when it grows again (the chat hides) – ask it to lay out again.
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
-    LaunchedEffect(chatVisible) {
+    LaunchedEffect(chatWidth) {
         repeat(3) {
             delay(60)
             playerView?.let { v ->
@@ -355,13 +391,26 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
             modifier = Modifier.fillMaxSize().padding(end = chatWidth),
         )
 
-        if (chatVisible) {
+        val q = queue
+        if (queueOpen && q != null) {
+            QueuePanel(q, api, Modifier.align(Alignment.CenterEnd).width(chatWidth).fillMaxHeight()) { item ->
+                sync.load(item)
+                startingFrom = sync.state.value?.version ?: 0
+                starting = item
+                queueOpen = false
+            }
+        } else if (chatVisible) {
             ChatPanel(chatMsgs, Modifier.align(Alignment.CenterEnd).width(chatWidth).fillMaxHeight())
         }
 
+        // Picked in the queue: say so right away, until it plays (fetching it can take a few seconds).
+        val pick = starting
+        if (pick != null && !panelOpen) {
+            StatusChip(tr("Starting “{title}”…", "title" to pick.title), Modifier.align(Alignment.TopEnd).padding(top = 28.dp, end = 28.dp + chatWidth))
+        }
         // Status (buffering/syncing) while the overlay is hidden
         if (!showOverlay && !panelOpen && controller.status.isNotEmpty()) {
-            StatusChip(controller.status, Modifier.align(Alignment.TopEnd).padding(top = 28.dp, end = 28.dp + chatWidth))
+            if (pick == null) StatusChip(controller.status, Modifier.align(Alignment.TopEnd).padding(top = 28.dp, end = 28.dp + chatWidth))
         }
 
         AnimatedVisibility(
@@ -369,7 +418,7 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
             modifier = Modifier.padding(end = chatWidth),
         ) {
             if (st != null && media != null) {
-                val hints = keyHints(spec, media, chatVisible, channels.isNotEmpty())
+                val hints = keyHints(spec, media, chatVisible, channels.isNotEmpty(), !queue?.items.isNullOrEmpty())
                 val overlay = spec.overlay
                 if (overlay != null) {
                     // The plugin's own overlay, bound to {{media}} and {{player}}.
@@ -481,7 +530,7 @@ private fun defaultSpec(media: Media?): PlayerSpec = PlayerSpec(
 )
 
 /** The help line at the bottom, built from what the plugin's keys do, e.g. "OK  pause/play   ·   ▲▼  change channel". */
-private fun keyHints(spec: PlayerSpec, media: Media, chatOn: Boolean, hasChannels: Boolean): String {
+private fun keyHints(spec: PlayerSpec, media: Media, chatOn: Boolean, hasChannels: Boolean, hasQueue: Boolean = false): String {
     val glyphs = listOf("ok" to "OK", "up" to "▲", "down" to "▼", "left" to "◀", "right" to "▶")
     val merged = LinkedHashMap<String, MutableList<String>>()
     for ((k, glyph) in glyphs) {
@@ -492,6 +541,7 @@ private fun keyHints(spec: PlayerSpec, media: Media, chatOn: Boolean, hasChannel
             "channels" -> if (hasChannels) tr("channel list") else null
             "channel_up", "channel_down" -> if (hasChannels) tr("change channel") else null
             "seek_back", "seek_forward" -> if (!media.live) tr("skip 10 s") else null
+            "queue" -> if (hasQueue) tr("up next") else null
             else -> null
         } ?: continue
         merged.getOrPut(label) { mutableListOf() } += glyph
@@ -592,6 +642,57 @@ private fun StreamOverlay(st: RoomState, media: Media, members: List<Member>, co
                     if (media.subtitle != null) {
                         Spacer(Modifier.height(6.dp))
                         Text(media.title, fontSize = 18.sp, color = Palette.Dim, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * What plays next, to the right of the video (where the chat goes). The one playing now is marked; focus starts on
+ * the one after it. OK plays the chosen one for everyone, Back closes.
+ */
+@Composable
+private fun QueuePanel(queue: Queue, api: Api, modifier: Modifier = Modifier, onPick: (Item) -> Unit) {
+    val listState = rememberLazyListState()
+    val first = remember { FocusRequester() }
+    // The one standing still under the focus for a moment is fetched in advance – it starts quickly if picked.
+    var focused by remember { mutableStateOf<Item?>(null) }
+    LaunchedEffect(focused) { focused?.let { delay(400); api.prepare(it.plugin, it.id) } }
+    val currentIdx = queue.items.indexOfFirst { it.id == queue.current }
+    val startIdx = (currentIdx + 1).takeIf { it in queue.items.indices } ?: currentIdx.coerceAtLeast(0)
+    LaunchedEffect(queue) {
+        listState.scrollToItem((startIdx - 1).coerceAtLeast(0))
+        delay(80)
+        runCatching { first.requestFocus() }
+    }
+    Column(modifier.background(Color(0xFF0E1015)).padding(start = 14.dp, end = 14.dp, top = 22.dp, bottom = 16.dp)) {
+        Text(tr("Up next"), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Palette.Dim, modifier = Modifier.padding(start = 8.dp))
+        queue.title?.let {
+            Text(it, fontSize = 13.sp, color = Palette.Faint, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 8.dp, top = 2.dp))
+        }
+        Spacer(Modifier.height(12.dp))
+        LazyColumn(Modifier.weight(1f), state = listState, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            val keys = uniqueKeys(queue.items)
+            itemsIndexed(queue.items, key = { idx, _ -> keys[idx] }) { idx, item ->
+                val playing = idx == currentIdx
+                FocusRow(
+                    // Greyed out (e.g. a song not found on YouTube): shown, never played.
+                    onClick = { if (!item.unavailable) onPick(item) },
+                    selected = playing,
+                    height = 76.dp,
+                    onFocus = { if (!playing && !item.unavailable) focused = item },
+                    modifier = (if (idx == startIdx) Modifier.focusRequester(first) else Modifier).alpha(if (item.unavailable) 0.4f else 1f),
+                ) {
+                    Text("${idx + 1}", fontSize = 13.sp, color = Palette.Faint, modifier = Modifier.width(30.dp))
+                    Thumb(api.abs(item.image), item.title, Modifier.width(96.dp).height(54.dp), fit = false, corner = 6.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        if (playing) Text(tr("Now playing").uppercase(), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = Palette.Accent)
+                        Text(item.title, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = if (playing) 1 else 2, overflow = TextOverflow.Ellipsis, lineHeight = 18.sp)
+                        val sub = listOfNotNull(item.subtitle?.takeIf { it.isNotEmpty() }, item.duration?.takeIf { it > 0 }?.let { formatTime(it) }).joinToString("  ·  ")
+                        if (sub.isNotEmpty()) Text(sub, fontSize = 12.sp, color = Palette.Dim, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -735,7 +836,8 @@ private fun ChannelPanel(title: String, channels: List<Item>, epg: Map<String, L
                 Text(tr("Loading channels…"), color = Palette.Dim, modifier = Modifier.padding(14.dp))
             } else {
                 LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    itemsIndexed(channels, key = { _, it -> it.key }) { idx, item ->
+                    val keys = uniqueKeys(channels)
+                    itemsIndexed(channels, key = { idx, _ -> keys[idx] }) { idx, item ->
                         ChannelRow(
                             item = item,
                             epg = epg[item.id],

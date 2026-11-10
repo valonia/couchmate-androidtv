@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import app.couchmate.Api
+import app.couchmate.FavGroup
 import app.couchmate.Favorite
 import app.couchmate.Program
 import app.couchmate.SyncClient
@@ -57,18 +58,6 @@ import app.couchmate.now
 import app.couchmate.reminderKey
 import app.couchmate.tr
 import kotlinx.coroutines.delay
-
-/** The sections favourites are grouped into, by kind. Unknown kinds go under "Other". */
-private fun kindTitle(kind: String?): String = when (kind) {
-    "series" -> tr("Series")
-    "movie" -> tr("Movies")
-    "channel" -> tr("Channels")
-    "stream" -> tr("Streams")
-    "video" -> tr("Videos")
-    else -> tr("Other")
-}
-
-private val KIND_ORDER = listOf("series", "movie", "channel", "stream", "video")
 
 /** The room's shared favourites, from every plugin, with new episodes marked. */
 @Composable
@@ -80,7 +69,7 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
     BackHandler(enabled = guideFor != null) { guideFor = null }
 
     // Now/next for the favourite channels, per plugin.
-    val channels = favorites.filter { it.kind == "channel" }
+    val channels = favorites.filter { it.group.style == "guide" }
     var epg by remember { mutableStateOf<Map<String, List<Program>>>(emptyMap()) }
     var epgLoaded by remember { mutableStateOf(false) }
     LaunchedEffect(channels.map { it.key }) {
@@ -147,9 +136,10 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
             return@Column
         }
 
-        // Things with new episodes first, then by kind.
-        val byKind = favorites.sortedByDescending { it.newCount }.groupBy { it.kind?.takeIf { k -> k in KIND_ORDER } ?: "other" }
-        val kinds = (KIND_ORDER + "other").filter { byKind[it]?.isNotEmpty() == true }
+        // In the groups the plugins name (ordered by them); within a group, new episodes and live ones first.
+        val sorted = favorites.sortedWith(compareByDescending<Favorite> { it.newCount }.thenByDescending { it.live })
+        val groups = sorted.map { it.group }.distinctBy { it.id }.sortedWith(compareBy<FavGroup> { it.order }.thenBy { it.title })
+        val byGroup = sorted.groupBy { it.group.id }
 
         // From the menu: back to the row you were on, otherwise the top one – not the row at the same height.
         val listState = rememberLazyListState()
@@ -175,13 +165,13 @@ fun FavoritesScreen(sync: SyncClient, api: Api) {
                     }
                 }
             } }
-            for (kind in kinds) {
-                val list = byKind[kind].orEmpty()
-                item(key = "fav-$kind") { Box(entry.item("fav-$kind")) {
-                    FavSection(kindTitle(kind), list.size) {
-                        when (kind) {
-                            "channel" -> items(list, key = { it.key }) { f -> FavChannel(f, api, epg[f.key], epgLoaded, now, reminders.map { it.key }.toSet(), onClick = { sync.load(f.toItem()) }, onLongClick = { guideFor = f }) }
-                            "series", "movie" -> items(list, key = { it.key }) { f ->
+            for (group in groups) {
+                val list = byGroup[group.id].orEmpty()
+                item(key = "fav-${group.id}") { Box(entry.item("fav-${group.id}")) {
+                    FavSection(group.title, list.size) {
+                        when (group.style) {
+                            "guide" -> items(list, key = { it.key }) { f -> FavChannel(f, api, epg[f.key], epgLoaded, now, reminders.map { it.key }.toSet(), onClick = { sync.load(f.toItem()) }, onLongClick = { guideFor = f }) }
+                            "poster" -> items(list, key = { it.key }) { f ->
                                 PosterCard(
                                     title = cleanTitle(f.title), iconUrl = api.abs(f.image),
                                     onClick = { if (f.action == "open") openedKey = f.key else sync.load(f.toItem()) },

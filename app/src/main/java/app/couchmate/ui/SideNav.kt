@@ -13,6 +13,8 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -137,14 +139,23 @@ fun SideNav(
         }
         Spacer(Modifier.height(14.dp))
 
-        // The entries can be many (several plugins) – they scroll, the bottom part stays put.
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        // The entries can be many (several plugins): they shrink a little to fit, and scroll if they still do not
+        // (a fade at the bottom shows there is more). The bottom part stays put.
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        var areaHeight by remember { mutableStateOf(0) }
+        Box(Modifier.weight(1f).fillMaxWidth().onSizeChanged { areaHeight = it.height }) {
+        val count = entries.size + 2
+        val rowHeight = if (areaHeight == 0) 52.dp
+            else ((with(density) { areaHeight.toDp() } - 4.dp * (count - 1)) / count).coerceIn(40.dp, 52.dp)
+        val scroll = rememberScrollState()
+        Column(Modifier.fillMaxSize().verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             // Focus coming into the menu lands on the chosen entry – or on Search while the menu is still loading.
             val searchHoldsFocus = selectedKey == SEARCH_KEY || entries.none { it.key == selectedKey }
             NavItem(
                 icon = Icons.Filled.Search, label = tr("Search"), expanded = expanded, selected = selectedKey == SEARCH_KEY,
                 onClick = { onSelect(SEARCH_KEY) },
                 modifier = if (searchHoldsFocus) Modifier.focusRequester(selectedFocus) else Modifier,
+                height = rowHeight,
             )
             entries.forEach { e ->
                 val sel = e.key == selectedKey
@@ -156,9 +167,17 @@ fun SideNav(
                     badge = if (e.core == "favorites" && newEpisodes > 0) "$newEpisodes" else null,
                     onClick = { onSelect(e.key) },
                     modifier = if (sel) Modifier.focusRequester(selectedFocus) else Modifier,
+                    height = rowHeight,
                 )
             }
-            NavItem(Icons.Filled.Settings, tr("Settings"), expanded, selected = false, onClick = onSettings)
+            NavItem(Icons.Filled.Settings, tr("Settings"), expanded, selected = false, onClick = onSettings, height = rowHeight)
+        }
+        if (scroll.canScrollForward) {
+            Box(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(28.dp)
+                    .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color.Transparent, Palette.Panel))),
+            )
+        }
         }
 
         if (media != null) {
@@ -187,10 +206,11 @@ private fun NavItem(
     badge: String? = null,
     sublabel: String? = null,
     accent: Boolean = false,
+    height: androidx.compose.ui.unit.Dp = 52.dp,
 ) {
     Surface(
         onClick = onClick,
-        modifier = modifier.fillMaxWidth().height(if (sublabel != null && expanded) 60.dp else 52.dp),
+        modifier = modifier.fillMaxWidth().height(if (sublabel != null && expanded) 60.dp else height),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         colors = ClickableSurfaceDefaults.colors(

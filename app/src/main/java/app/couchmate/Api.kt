@@ -116,6 +116,18 @@ class Api(private val base: String, private val pin: String) {
         parsePrograms(JSONArray(call("/api/data/${enc(plugin)}/guide?id=" + enc(id))))
 
     /** The channels to zap between while [id] plays. */
+    /** Gets an item's stream ready on the server in the background (e.g. the one focused in the queue). */
+    suspend fun prepare(plugin: String, id: String) {
+        runCatching { call("/api/prepare/${enc(plugin)}?id=" + enc(id)) }
+    }
+
+    /** What plays next while [id] plays (the plugin's data('queue')). */
+    suspend fun queue(plugin: String, id: String): Queue {
+        val o = JSONObject(call("/api/data/${enc(plugin)}/queue?id=" + enc(id)))
+        val items = o.optJSONArray("items")?.mapObjects { parseItem(it, plugin) } ?: emptyList()
+        return Queue(o.optString("title").ifEmpty { null }, o.optString("current").ifEmpty { null }, items)
+    }
+
     suspend fun channels(plugin: String, id: String): List<Item> =
         JSONArray(call("/api/data/${enc(plugin)}/channels?id=" + enc(id))).mapObjects { parseItem(it, plugin) }
 

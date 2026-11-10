@@ -40,6 +40,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -207,6 +212,7 @@ internal fun ViewContext.ListBlock(node: JSONObject, modifier: Modifier, grid: B
     if (grid) {
         val state = rememberLazyGridState()
         val entry = rememberFocusEntry(state, listId)
+        entry.selected = { keys.indexOfFirst { it == selected }.takeIf { it >= 0 } }
         LazyVerticalGrid(
             columns = GridCells.Adaptive(dpOf(node.opt("minWidth")) ?: 120.dp),
             state = state,
@@ -244,6 +250,7 @@ internal fun ViewContext.ListBlock(node: JSONObject, modifier: Modifier, grid: B
     val indexOf = remember(shown) { shown.withIndex().associate { (i, o) -> System.identityHashCode(o) to i } }
     val state = rememberLazyListState()
     val entry = rememberFocusEntryByKey(state, listId)
+    entry.selected = { keys.firstOrNull { it == selected } }
     val body: LazyListScope.() -> Unit = {
         itemsIndexed(entries, key = { n, o -> if (o is Heading) "h:${o.text}:$n" else keys[indexOf[System.identityHashCode(o)] ?: 0] }) { _, o ->
             if (o is Heading) {
@@ -356,7 +363,9 @@ private fun unwrap(v: Any?): Any? = if (v == JSONObject.NULL) null else v
  */
 @Composable
 fun ViewScreen(sync: SyncClient, api: Api, ref: ViewRef, open: (ViewRef) -> Unit, back: () -> Unit, modifier: Modifier = Modifier) {
-    var root by remember(ref.key) { mutableStateOf<JSONObject?>(null) }
+    // The last answer for this view is shown straight away (e.g. going back to it) while it is fetched again.
+    val cacheKey = "${app.couchmate.I18n.lang}|${ref.key}"
+    var root by remember(ref.key) { mutableStateOf(synchronized(viewCache) { viewCache[cacheKey] }) }
     var error by remember(ref.key) { mutableStateOf<String?>(null) }
     val saved = rememberSaveable(ref.key) { mutableStateOf<String?>(null) }
     val state = remember(ref.key) {
@@ -376,6 +385,7 @@ fun ViewScreen(sync: SyncClient, api: Api, ref: ViewRef, open: (ViewRef) -> Unit
                 val v = api.view(ref.plugin, ref.id, ref.params)
                 if (first && !restored) v.optJSONObject("state")?.let { s -> for (k in s.keys()) state[k] = unwrap(s.opt(k)) }
                 root = v
+                synchronized(viewCache) { viewCache[cacheKey] = v }
                 error = null
             } catch (e: Exception) { error = e.message }
             first = false
@@ -402,6 +412,11 @@ fun ViewScreen(sync: SyncClient, api: Api, ref: ViewRef, open: (ViewRef) -> Unit
     }
 }
 
+/** The latest answer for the last views shown (in memory only). */
+private val viewCache = object : LinkedHashMap<String, JSONObject>(16, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, JSONObject>?) = size > 12
+}
+
 /**
  * A stack of plugin views starting at [root]: "open" pushes a view, Back pops it. At the root, Back calls
  * [onExit] (if given) – otherwise the screen around it handles Back.
@@ -410,15 +425,48 @@ fun ViewScreen(sync: SyncClient, api: Api, ref: ViewRef, open: (ViewRef) -> Unit
 fun ViewHost(sync: SyncClient, api: Api, root: ViewRef, onExit: (() -> Unit)? = null) {
     var stack by rememberSaveable(root.key) { mutableStateOf(listOf(root.encode())) }
     val current = ViewRef.decode(stack.last())
-    BackHandler(enabled = stack.size > 1 || onExit != null) {
-        if (stack.size > 1) stack = stack.dropLast(1) else onExit?.invoke()
+    // Each view keeps its saved state (scroll position, the item you were on) while another view is on top,
+    // and gets focus back on that item when you come back to it.
+    val holder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+    val memory = LocalFocusMemory.current ?: remember { mutableStateOf<String?>(null) }
+    val leftFrom = remember { HashMap<String, String?>() }
+    // While one view is swapped for another, focus waits here (invisible) – otherwise it falls back to the
+    // menu on the left, which then slides out until the new view takes focus.
+    val parking = remember { FocusRequester() }
+    var parked by remember { mutableStateOf(false) }
+    val park = { parked = true; runCatching { parking.requestFocus() } }
+    val open = { ref: ViewRef ->
+        leftFrom[stack.last()] = memory.value
+        park()
+        stack = stack + ref.encode()
     }
-    key(current.key) {
-        ViewScreen(
-            sync, api, current,
-            open = { stack = stack + it.encode() },
-            back = { if (stack.size > 1) stack = stack.dropLast(1) else onExit?.invoke() },
-        )
+    val back = {
+        if (stack.size > 1) {
+            val gone = stack.last()
+            park()
+            stack = stack.dropLast(1)
+            // The item you were on gets focus back (the lists look for this name when they appear).
+            memory.value = leftFrom.remove(stack.last())
+            holder.removeState(gone)
+        } else onExit?.invoke()
+    }
+    BackHandler(enabled = stack.size > 1 || onExit != null) { back() }
+    androidx.compose.runtime.CompositionLocalProvider(LocalFocusMemory provides memory) {
+        Box(Modifier.fillMaxSize()) {
+            Box(
+                Modifier.size(1.dp)
+                    .focusRequester(parking)
+                    .onFocusChanged { if (!it.isFocused) parked = false }
+                    .focusProperties { canFocus = parked }
+                    .focusable(),
+            )
+            val k = stack.last()
+            key(k) {
+                holder.SaveableStateProvider(k) {
+                    ViewScreen(sync, api, current, open = open, back = { back() })
+                }
+            }
+        }
     }
 }
 

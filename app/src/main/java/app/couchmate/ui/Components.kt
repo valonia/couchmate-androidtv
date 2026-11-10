@@ -26,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -206,14 +207,16 @@ fun Thumb(
                 }
             }
         }
-        if (url == null) initials()
-        else SubcomposeAsyncImage(
+        // The text shows until the picture is there (a plain image – cheaper than one composed per state).
+        var loaded by remember(url) { mutableStateOf(false) }
+        if (url == null || !loaded) initials()
+        if (url != null) coil.compose.AsyncImage(
             model = url,
             contentDescription = null,
             contentScale = if (fit) ContentScale.Fit else ContentScale.Crop,
             modifier = Modifier.fillMaxSize().padding(if (fit) 4.dp else 0.dp),
-            loading = { initials() },
-            error = { initials() },
+            onSuccess = { loaded = true },
+            onError = { loaded = false },
         )
     }
 }
@@ -454,3 +457,12 @@ fun cleanTitle(name: String): String =
 
 /** The year from the title if there is no metadata: "Film [2018]" -> "2018". */
 fun yearFromTitle(name: String): String? = Regex("[\\[(]((?:19|20)\\d{2})[\\])]").find(name)?.groupValues?.get(1)
+
+/**
+ * Keys for a lazy list of items that are unique even when a plugin lists the same item twice (e.g. a song that
+ * comes back in a YouTube Mix) – a repeated key would crash the list.
+ */
+fun uniqueKeys(items: List<app.couchmate.Item>): List<String> {
+    val seen = HashSet<String>()
+    return items.mapIndexed { i, it -> if (seen.add(it.key)) it.key else "${it.key}#$i" }
+}

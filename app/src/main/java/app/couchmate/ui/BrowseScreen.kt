@@ -30,7 +30,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -79,17 +78,11 @@ fun BrowseScreen(sync: SyncClient, api: Api, prefs: app.couchmate.Prefs, onOpenP
     // Settings open as a popup on top of the menu (the app stays connected).
     var showSettings by remember { mutableStateOf(false) }
 
-    // Back in the content: one step closer to the menu (e.g. guide → channels → groups → menu).
-    // In the menu itself the app closes (the system's normal Back).
+    // Back in the content: to the list on the left (e.g. guide → channels → groups, posters → groups), then
+    // the menu. In the menu itself the app closes (the system's normal Back).
     var railFocused by remember { mutableStateOf(false) }
-    val rootView = LocalView.current
     BackHandler(enabled = !railFocused && !showMembers && !showSettings) {
-        // The same as pressing left on the remote; if that does nothing, jump straight to the menu.
-        val down = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_DPAD_LEFT)
-        val up = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_DPAD_LEFT)
-        val handled = rootView.dispatchKeyEvent(down)
-        rootView.dispatchKeyEvent(up)
-        if (!handled) runCatching { firstFocus.requestFocus() }
+        if (!FocusTrail.back()) runCatching { firstFocus.requestFocus() }
     }
 
     Box(Modifier.fillMaxSize()) {

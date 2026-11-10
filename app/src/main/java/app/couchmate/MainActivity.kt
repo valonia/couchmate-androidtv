@@ -37,6 +37,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val prefs = Prefs(this)
         I18n.configure(this, prefs.language)
+        coil.Coil.setImageLoader(imageLoader(this))
         setContent {
             CouchmateTheme { App(prefs) }
         }

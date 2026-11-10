@@ -153,10 +153,18 @@ class SyncClient(
                 chat.value = (if (o.optBoolean("reset")) msgs else chat.value + msgs).takeLast(150)
             }
             "favorites" -> favorites.value = o.optJSONArray("favorites").mapObjects { f ->
+                // status = what the plugin says now (e.g. a Twitch channel live or offline) – over what was saved.
+                val st = f.optJSONObject("status")
                 Favorite(
                     key = f.getString("key"), plugin = f.getString("plugin"), id = f.getString("id"), kind = f.optStringOrNull("kind"),
-                    title = f.optString("title"), subtitle = f.optStringOrNull("subtitle"), image = f.optStringOrNull("image"),
-                    live = f.optBoolean("live"), action = f.optStringOrNull("action") ?: "play", view = f.optStringOrNull("view"), addedBy = f.optStringOrNull("addedBy"),
+                    title = st?.optStringOrNull("title") ?: f.optString("title"),
+                    subtitle = st?.optStringOrNull("subtitle") ?: f.optStringOrNull("subtitle"),
+                    image = st?.optStringOrNull("image") ?: f.optStringOrNull("image"),
+                    group = f.optJSONObject("group")?.let { g ->
+                        FavGroup(g.optString("id").ifEmpty { "other" }, g.optString("title").ifEmpty { tr("Other") }, g.optDouble("order", 99.0), g.optString("style").ifEmpty { "landscape" })
+                    } ?: FavGroup.OTHER,
+                    viewers = st?.takeIf { it.has("viewers") && !it.isNull("viewers") }?.optInt("viewers"),
+                    live = if (st?.has("live") == true) st.optBoolean("live") else f.optBoolean("live"), action = f.optStringOrNull("action") ?: "play", view = f.optStringOrNull("view"), addedBy = f.optStringOrNull("addedBy"),
                     newCount = f.optInt("newCount"), newLabel = f.optStringOrNull("newLabel"),
                 )
             }
@@ -179,6 +187,9 @@ class SyncClient(
                 I18n.invalidate(o.optStringOrNull("lang"))
                 menuVersion.value++ // the menu's titles come translated from the server
             }
+            "translations_version" -> {
+                if (I18n.checkVersion(o.optStringOrNull("lang"), o.optString("version"))) menuVersion.value++
+            }
             "history_changed" -> historyVersion.value++
             "notice" -> o.optStringOrNull("text")?.let { notice.value = System.currentTimeMillis() to it }
             "error" -> o.optStringOrNull("text")?.let { notice.value = System.currentTimeMillis() to it }
@@ -195,11 +206,10 @@ class SyncClient(
                 default = s.optStringOrNull("default"),
             )
         }
-        return PlayerSpec(keys, settings, o.optBoolean("channels"), o.optBoolean("guide"), o.optJSONObject("overlay"))
+        return PlayerSpec(keys, settings, o.optBoolean("channels"), o.optBoolean("guide"), o.optJSONObject("overlay"), queue = o.optBoolean("queue"))
     }
 
-    private fun parseState(o: JSONObject): RoomState {
-        val media = o.optJSONObject("media")?.let { j ->
+    private fun parseMedia(j: JSONObject): Media =
             Media(
                 plugin = j.getString("plugin"),
                 id = j.getString("id"),
@@ -210,11 +220,23 @@ class SyncClient(
                 live = j.optBoolean("live"),
                 url = api.abs(j.getString("url")) ?: j.getString("url"),
                 type = j.optString("type").ifEmpty { "file" },
+                audio = j.optBoolean("audio"),
                 chat = j.optBoolean("chat"),
                 player = j.optJSONObject("player")?.let(::parsePlayerSpec),
             )
+
+    private fun parseState(o: JSONObject): RoomState {
+        val media = o.optJSONObject("media")?.let(::parseMedia)
+        val upNext = o.optJSONObject("upNext")?.let { u ->
+            u.optJSONObject("item")?.let(::parseItem)?.let {
+                UpNext(it, u.optLong("startsAt"), early = u.optBoolean("early"), media = u.optJSONObject("media")?.let(::parseMedia))
+            }
         }
-        val upNext = o.optJSONObject("upNext")?.let { u -> u.optJSONObject("item")?.let(::parseItem)?.let { UpNext(it, u.optLong("startsAt")) } }
+        val preparedNext = o.optJSONObject("preparedNext")?.let { p ->
+            val item = p.optJSONObject("item")?.let(::parseItem)
+            val m = p.optJSONObject("media")?.let(::parseMedia)
+            if (item != null && m != null) PreparedNext(item, m) else null
+        }
         val reminder = o.optJSONObject("reminder")?.let { r ->
             val c = r.optJSONObject("channel")
             PendingReminder(r.optString("key"), r.optString("title"), r.optLong("start"), c?.optString("title") ?: "", c?.optStringOrNull("image"), r.optLong("switchAt"))
@@ -230,6 +252,7 @@ class SyncClient(
             action = o.optStringOrNull("action"),
             upNext = upNext,
             reminder = reminder,
+            preparedNext = preparedNext,
         )
     }
 
@@ -243,6 +266,7 @@ class SyncClient(
 
     /** Plays an item for everyone. [position] = where to start (seconds), e.g. when resuming. */
     fun load(item: Item, position: Double = 0.0) {
+        if (item.unavailable) return // greyed out: shown, never played
         val meta = JSONObject().put("title", item.title).put("subtitle", item.subtitle).put("image", item.image)
             .put("kind", item.kind).put("live", item.live)
         send(JSONObject().put("type", "load").put("plugin", item.plugin).put("id", item.id).put("position", position).put("meta", meta))
@@ -255,6 +279,8 @@ class SyncClient(
     fun seek(position: Double) = send(JSONObject().put("type", "seek").put("position", position))
     fun ready(version: Int, duration: Double = 0.0) =
         send(JSONObject().put("type", "ready").put("version", version).put("duration", duration))
+    /** The length of what plays (seconds) – for "next" when nobody had to get ready (e.g. a song that followed on). */
+    fun duration(value: Double) = send(JSONObject().put("type", "duration").put("value", value))
     /** Reports the position to the server (for the sync check in the admin panel). */
     fun report(position: Double, status: String) =
         send(JSONObject().put("type", "report").put("position", position).put("status", status).put("at", serverNow()))
@@ -276,6 +302,8 @@ class SyncClient(
     }
 
     // ---- next episode
+    /** The next one (shown before the end) is buffered here – see PlaybackSync.prepareNext. */
+    fun nextReady(id: String) = send(JSONObject().put("type", "next_ready").put("id", id))
     fun nextNow() = send(JSONObject().put("type", "next_now"))
     fun nextCancel() = send(JSONObject().put("type", "next_cancel"))
 

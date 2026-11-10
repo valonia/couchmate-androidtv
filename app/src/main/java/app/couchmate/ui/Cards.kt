@@ -185,7 +185,8 @@ fun CardRow(title: String, row: ItemRow, api: Api, sync: SyncClient, opener: Ite
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            items(row.items, key = { it.key }) { item ->
+            val keys = uniqueKeys(row.items)
+            itemsIndexed(row.items, key = { i, _ -> keys[i] }) { _, item ->
                 ItemCard(
                     item, row.style, api, sync, opener, playingKey,
                     modifier = (if (playingFocus != null && item.key == playingKey) Modifier.focusRequester(playingFocus) else Modifier)

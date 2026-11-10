@@ -9,7 +9,10 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.MergingMediaSource
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import kotlin.math.abs
 
 /**
@@ -67,6 +70,7 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
                 player.stop()
                 player.clearMediaItems()
                 loadedUrl = null
+                preparedUrl = null
             }
             status = tr("Nothing playing")
             return
@@ -83,16 +87,30 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
             rateWorks = null
             setRate(1f, force = true)
             hls = media.type == "hls"
-            load(url)
-            if (!media.live) {
-                // Joining in the middle of a movie starts right where the others are.
-                val start = if (st.paused || sync.serverNow() < st.refTime) st.position
-                else st.position + (sync.serverNow() - st.refTime) / 1000.0 + seekLead
-                player.seekTo(ms(start))
+            audioUrl = audioFor(media, url)
+            // Joining in the middle of a movie starts right where the others are.
+            val start = if (st.paused || sync.serverNow() < st.refTime) st.position
+            else st.position + (sync.serverNow() - st.refTime) / 1000.0 + seekLead
+            val handover = preparedUrl == url && player.mediaItemCount > 1
+            preparedUrl = null
+            if (handover) {
+                // Already buffered behind the one that just ended: switch to it (unless the player already moved
+                // on by itself) and drop the old one – a nearly seamless switch.
+                if (player.currentMediaItemIndex == 0) player.seekTo(1, ms(start))
+                player.removeMediaItem(0)
                 seekedVersion = st.version
                 lastSeekAt = now
+            } else {
+                load(url)
+                if (!media.live) {
+                    player.seekTo(ms(start))
+                    seekedVersion = st.version
+                    lastSeekAt = now
+                }
             }
         }
+
+        if (!media.live) prepareNext(st)
 
         if (player.playerError != null) {
             status = tr("Playback error ({error}) – retrying…", "error" to lastError)
@@ -124,7 +142,27 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
     }
 
     private fun tickVod(st: RoomState, now: Long) {
+        if (player.currentMediaItemIndex > 0) {
+            if (st.upNext?.early == true && !st.paused) {
+                // The one that was ending is over and the buffered next one already plays – the server switches
+                // everyone to it in a moment. No syncing against the old one meanwhile.
+                player.playWhenReady = true
+                status = ""
+                return
+            }
+            // Cancelled or paused just as it ended: back to the old one, where the room is.
+            player.seekTo(0, ms(st.position))
+            player.removeMediaItems(1, player.mediaItemCount)
+            preparedUrl = null
+            lastSeekAt = now
+        }
         val pos = positionSec()
+        // The length, for "next" (once per item – the server may not know it when nobody had to get ready).
+        val dur0 = durationSec()
+        if (dur0 > 0 && reportedDurationFor != loadedUrl && player.playbackState == Player.STATE_READY) {
+            reportedDurationFor = loadedUrl
+            sync.duration(dur0)
+        }
 
         if (st.paused) {
             player.playWhenReady = false
@@ -219,10 +257,64 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
     /** Whether the media that plays is HLS (told by the server; the address has no file extension). */
     private var hls = false
 
+    /** The separate audio file that plays together with the video, if there is one. */
+    private var audioUrl: String? = null
+    private val http by lazy { DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true) }
+
+    private fun audioFor(media: Media, url: String) =
+        if (media.audio && media.type != "hls") url + (if ('?' in url) "&" else "?") + "part=audio" else null
+
+    /** The address of the next one that is buffered behind the current one (see [prepareNext]). */
+    private var preparedUrl: String? = null
+    private var reportedDurationFor: String? = null
+    private var reportedNextReady: String? = null
+
+    /**
+     * "Next" shown before the end (music): the next one is put behind the current one in the player, which
+     * buffers it while the current one ends – so the switch is nearly seamless. Removed again if it is cancelled.
+     */
+    private fun prepareNext(st: RoomState) {
+        // Told early (preparedNext, ~40 s before the end) or with the card (upNext) – whichever comes first.
+        val early = st.upNext?.takeIf { it.early && it.media != null }
+        val nextId = early?.item?.id ?: st.preparedNext?.item?.id
+        val next = (early?.media ?: st.preparedNext?.media)?.takeIf { !it.live }
+        val nextUrl = next?.let(urlFor)
+        if (nextUrl == preparedUrl) {
+            // Tell the server once a few seconds of it are buffered – it only switches straight on when every
+            // app has done so (otherwise everyone waits for each other as usual).
+            if (nextUrl != null && reportedNextReady != nextUrl && player.currentMediaItemIndex == 0 && player.mediaItemCount > 1) {
+                val left = (player.duration - player.currentPosition).takeIf { player.duration != C.TIME_UNSET } ?: return
+                if (player.totalBufferedDuration - left >= 3000) {
+                    reportedNextReady = nextUrl
+                    nextId?.let(sync::nextReady)
+                }
+            }
+            return
+        }
+        if (player.mediaItemCount > 1 && player.currentMediaItemIndex == 0) player.removeMediaItems(1, player.mediaItemCount)
+        preparedUrl = null
+        if (next != null && nextUrl != null && player.mediaItemCount == 1) {
+            addSource(nextUrl, next.type == "hls", audioFor(next, nextUrl), append = true)
+            preparedUrl = nextUrl
+        }
+    }
+
     private fun load(url: String) {
-        val item = MediaItem.Builder().setUri(url).apply { if (hls) setMimeType(MimeTypes.APPLICATION_M3U8) }.build()
-        player.setMediaItem(item)
+        addSource(url, hls, audioUrl, append = false)
         player.prepare()
+    }
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun addSource(url: String, hls: Boolean, audio: String?, append: Boolean) {
+        val item = MediaItem.Builder().setUri(url).apply { if (hls) setMimeType(MimeTypes.APPLICATION_M3U8) }.build()
+        if (audio == null) {
+            if (append) player.addMediaItem(item) else player.setMediaItem(item)
+        } else {
+            // Video and audio come as two files (e.g. YouTube in HD) – played as one.
+            val f = ProgressiveMediaSource.Factory(http)
+            val source = MergingMediaSource(f.createMediaSource(item), f.createMediaSource(MediaItem.fromUri(audio)))
+            if (append) player.addMediaSource(source) else player.setMediaSource(source)
+        }
     }
 
     private fun setRate(r: Float, force: Boolean = false) {
