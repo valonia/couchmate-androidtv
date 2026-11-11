@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -38,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.FocusRequester
@@ -274,16 +277,26 @@ internal fun ViewContext.ListBlock(node: JSONObject, modifier: Modifier, grid: B
     } else {
         LazyColumn(state = state, modifier = listMod, contentPadding = content, verticalArrangement = Arrangement.spacedBy(gap), content = body)
     }
-    Autofocus(node, entry, keys.firstOrNull())
+    // "initial": the item to start on when the view opens (e.g. the episode to carry on with) – scrolled to first.
+    val startKey = remember(keys) { initial()?.let { i -> keys.firstOrNull { it == i } } }
+    Autofocus(node, entry, keys.firstOrNull(), startKey) { key ->
+        val pos = entries.indexOfFirst { o -> o !is Heading && keys[indexOf[System.identityHashCode(o)] ?: 0] == key }
+        if (pos >= 0) state.scrollToItem((pos - 1).coerceAtLeast(0))
+    }
 }
 
-/** "autofocus": true – the list takes focus when the view opens (unless coming back from the player). */
+/**
+ * "autofocus": true – the list takes focus when the view opens (unless coming back from the player): on its
+ * "initial" item when it has one, else the one you were on, else the first.
+ */
 @Composable
-internal fun Autofocus(node: JSONObject, entry: FocusEntry, first: Any?) {
+internal fun Autofocus(node: JSONObject, entry: FocusEntry, first: Any?, start: Any? = null, scrollTo: suspend (Any) -> Unit = {}) {
     if (!node.optBoolean("autofocus") || first == null) return
     LaunchedEffect(Unit) {
         delay(120)
-        if (!entry.shouldRestore) runCatching { entry.requester(entry.last ?: first).requestFocus() }
+        if (entry.shouldRestore) return@LaunchedEffect
+        if (start != null) { scrollTo(start); delay(80) }
+        runCatching { entry.requester(start ?: entry.last ?: first).requestFocus() }
     }
 }
 
@@ -296,8 +309,20 @@ internal fun ItemBox(
     val width = dpOf(node.opt("itemWidth"))
     val height = dpOf(node.opt("itemHeight"))
     when (style) {
-        "row" -> FocusRow(onClick = onClick, onLongClick = onLongClick, selected = selected, height = height ?: 56.dp, onFocus = onFocus, modifier = focusMod) {
-            with(ctx) { Block(template, Modifier.weight(1f)) }
+        "row" -> Row(verticalAlignment = Alignment.CenterVertically) {
+            FocusRow(onClick = onClick, onLongClick = onLongClick, selected = selected, height = height ?: 56.dp, onFocus = onFocus, modifier = Modifier.weight(1f).then(focusMod)) {
+                with(ctx) { Block(template, Modifier.weight(1f)) }
+            }
+            // "buttons": buttons of the row's own next to it (each with "text", "onClick", "when"), e.g. "Start over".
+            val buttons = node.optJSONArray("buttons")
+            if (buttons != null) with(ctx) {
+                for (i in 0 until buttons.length()) {
+                    val b = buttons.optJSONObject(i) ?: continue
+                    if (!visible(b)) continue
+                    Spacer(Modifier.width(8.dp))
+                    Pill(string(b.opt("text")), selected = false, onClick = { run(b.opt("onClick")) })
+                }
+            }
         }
         "card" -> Surface(
             onClick = onClick, onLongClick = onLongClick,
