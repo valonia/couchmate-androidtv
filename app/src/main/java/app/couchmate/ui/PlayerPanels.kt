@@ -122,6 +122,16 @@ fun autoSelectSubtitle(player: ExoPlayer, tracks: Tracks, prefs: Prefs) {
         .build()
 }
 
+/** CC is on and the video has the plugin's captions: show them (whatever the saved subtitle choice is). */
+fun selectCaptions(player: ExoPlayer, tracks: Tracks) {
+    val group = tracks.groups.firstOrNull { g ->
+        g.type == C.TRACK_TYPE_TEXT && (0 until g.length).any { g.getTrackFormat(it).label == "CC" }
+    }
+    val b = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+    if (group != null) b.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, 0))
+    player.trackSelectionParameters = b.build()
+}
+
 /** Subtitle choices: Off + every subtitle the player can show. */
 fun subtitleOptions(player: ExoPlayer, tracks: Tracks, prefs: Prefs): List<TrackOption> {
     val disabled = player.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)

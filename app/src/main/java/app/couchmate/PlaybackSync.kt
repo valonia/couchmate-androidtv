@@ -1,5 +1,6 @@
 package app.couchmate
 
+import android.net.Uri
 import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -11,9 +12,13 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import kotlin.math.abs
+
+/** The id of the CC subtitle track (the plugin's captions). */
+const val CAPTIONS_ID = "cc"
 
 /**
  * Makes ExoPlayer follow the room's state. Called every 250 ms. Small differences are corrected with the
@@ -30,6 +35,16 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
 
     /** The address that is played (plugins' own player choices are added to it). */
     var urlFor: (Media) -> String = { it.url }
+
+    /** The captions to show with it (WebVTT), when CC is on and the plugin has them – else null. */
+    var captionsFor: (Media, String) -> String? = { _, _ -> null }
+
+    /** CC was switched on or off: load the one that plays again (with or without captions) where the room is. */
+    fun reloadCaptions() {
+        if (player.mediaItemCount > 1) player.removeMediaItems(1, player.mediaItemCount)
+        preparedUrl = null
+        loadedUrl = null
+    }
     private var seekedVersion = -1
     private var readyVersion = -1
     private var cooldownUntil = 0L
@@ -88,6 +103,7 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
             setRate(1f, force = true)
             hls = media.type == "hls"
             audioUrl = audioFor(media, url)
+            captionsUrl = captionsFor(media, url)
             // Joining in the middle of a movie starts right where the others are.
             val start = if (st.paused || sync.serverNow() < st.refTime) st.position
             else st.position + (sync.serverNow() - st.refTime) / 1000.0 + seekLead
@@ -259,6 +275,7 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
 
     /** The separate audio file that plays together with the video, if there is one. */
     private var audioUrl: String? = null
+    private var captionsUrl: String? = null
     private val http by lazy { DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true) }
 
     private fun audioFor(media: Media, url: String) =
@@ -294,25 +311,33 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
         if (player.mediaItemCount > 1 && player.currentMediaItemIndex == 0) player.removeMediaItems(1, player.mediaItemCount)
         preparedUrl = null
         if (next != null && nextUrl != null && player.mediaItemCount == 1) {
-            addSource(nextUrl, next.type == "hls", audioFor(next, nextUrl), append = true)
+            addSource(nextUrl, next.type == "hls", audioFor(next, nextUrl), captionsFor(next, nextUrl), append = true)
             preparedUrl = nextUrl
         }
     }
 
     private fun load(url: String) {
-        addSource(url, hls, audioUrl, append = false)
+        addSource(url, hls, audioUrl, captionsUrl, append = false)
         player.prepare()
     }
 
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-    private fun addSource(url: String, hls: Boolean, audio: String?, append: Boolean) {
-        val item = MediaItem.Builder().setUri(url).apply { if (hls) setMimeType(MimeTypes.APPLICATION_M3U8) }.build()
+    private fun addSource(url: String, hls: Boolean, audio: String?, captions: String?, append: Boolean) {
+        val item = MediaItem.Builder().setUri(url).apply {
+            if (hls) setMimeType(MimeTypes.APPLICATION_M3U8)
+            // CC: the plugin's captions as a subtitle file next to the video, shown straight away.
+            if (captions != null) setSubtitleConfigurations(listOf(
+                MediaItem.SubtitleConfiguration.Builder(Uri.parse(captions))
+                    .setId(CAPTIONS_ID).setLabel("CC").setMimeType(MimeTypes.TEXT_VTT)
+                    .setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build(),
+            ))
+        }.build()
         if (audio == null) {
             if (append) player.addMediaItem(item) else player.setMediaItem(item)
         } else {
-            // Video and audio come as two files (e.g. YouTube in HD) – played as one.
-            val f = ProgressiveMediaSource.Factory(http)
-            val source = MergingMediaSource(f.createMediaSource(item), f.createMediaSource(MediaItem.fromUri(audio)))
+            // Video and audio come as two files (e.g. YouTube in HD) – played as one (with the captions, if any).
+            val video = DefaultMediaSourceFactory(http).createMediaSource(item)
+            val source = MergingMediaSource(video, ProgressiveMediaSource.Factory(http).createMediaSource(MediaItem.fromUri(audio)))
             if (append) player.addMediaSource(source) else player.setMediaSource(source)
         }
     }

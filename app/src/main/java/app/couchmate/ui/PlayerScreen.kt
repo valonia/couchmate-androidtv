@@ -75,6 +75,7 @@ import androidx.media3.ui.SubtitleView
 import androidx.tv.material3.Text
 import app.couchmate.Api
 import app.couchmate.ChatMsg
+import app.couchmate.I18n
 import app.couchmate.Item
 import app.couchmate.Media
 import app.couchmate.Member
@@ -120,11 +121,17 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
         val listener = object : Player.Listener {
             override fun onTracksChanged(t: Tracks) {
                 tracks = t
-                // Once per video: pick the subtitle you chose last time.
+                // Once per video: CC when it is on and the video has captions, otherwise the subtitle you chose
+                // last time.
                 val uri = player.currentMediaItem?.localConfiguration?.uri?.toString()
-                if (uri != null && uri !in autoPicked && t.groups.any { it.type == C.TRACK_TYPE_TEXT }) {
+                if (uri != null && uri !in autoPicked && !t.isEmpty) {
                     autoPicked += uri
-                    autoSelectSubtitle(player, t, prefs)
+                    val m = sync.state.value?.media
+                    if (m?.captions == true && prefs.cc) selectCaptions(player, t)
+                    else {
+                        applyTrackPrefs(player, prefs)
+                        if (t.groups.any { it.type == C.TRACK_TYPE_TEXT }) autoSelectSubtitle(player, t, prefs)
+                    }
                 }
             }
         }
@@ -198,6 +205,16 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
             if (choices.isEmpty()) m.url
             else m.url + (if ('?' in m.url) "&" else "?") + choices.joinToString("&") { s -> "opt.${s.id}=" + java.net.URLEncoder.encode(optValue(m, s) ?: "", "UTF-8") }
         }
+        // CC on: the plugin's captions in the app's language (it picks the best it has).
+        controller.captionsFor = { m, url ->
+            if (m.captions && prefs.cc) url + (if ('?' in url) "&" else "?") + "part=captions&lang=" + (I18n.lang ?: "en") else null
+        }
+    }
+    fun toggleCaptions() {
+        prefs.cc = !prefs.cc
+        autoPicked.clear() // pick the tracks again when it has loaded
+        controller.reloadCaptions()
+        optVersion++
     }
 
     // ---- channels to zap between, and what is on (when the plugin offers them)
@@ -372,7 +389,8 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
                     Key.MediaFastForward -> { nudge(30.0); true }
                     Key.ChannelUp -> { if (firstPress && spec.channels) zap(-1); true }
                     Key.ChannelDown -> { if (firstPress && spec.channels) zap(1); true }
-                    Key.Captions -> { settingsPanel = true; true }
+                    // The remote's CC button: CC on/off where the plugin has captions, else the settings.
+                    Key.Captions -> { if (firstPress) { if (cur?.media?.captions == true) { toggleCaptions(); poke() } else settingsPanel = true }; true }
                     else -> ev.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_INFO && run { poke(); true }
                 }
             }
@@ -488,6 +506,10 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
                         ) else null
                         "audio" -> audioOptions(player, tracks, prefs).takeIf { it.size > 1 }?.let { (s.title ?: tr("Audio")) to it }
                         "subtitles" -> subtitleOptions(player, tracks, prefs).takeIf { it.size > 1 }?.let { (s.title ?: tr("Subtitles")) to it }
+                        "captions" -> if (m?.captions == true) (s.title ?: "CC") to listOf(
+                            TrackOption(tr("Off"), !prefs.cc) { if (prefs.cc) toggleCaptions() },
+                            TrackOption(tr("On"), prefs.cc) { if (!prefs.cc) toggleCaptions() },
+                        ) else null
                         "choice" -> if (m != null) (s.title ?: s.id) to s.options.map { o ->
                             TrackOption(o.label, optValue(m, s) == o.id) {
                                 prefs.setPluginOpt(m.plugin, s.id, o.id)

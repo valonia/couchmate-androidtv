@@ -221,6 +221,7 @@ class SyncClient(
                 url = api.abs(j.getString("url")) ?: j.getString("url"),
                 type = j.optString("type").ifEmpty { "file" },
                 audio = j.optBoolean("audio"),
+                captions = j.optBoolean("captions"),
                 chat = j.optBoolean("chat"),
                 player = j.optJSONObject("player")?.let(::parsePlayerSpec),
             )

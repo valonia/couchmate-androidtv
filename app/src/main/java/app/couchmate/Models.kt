@@ -143,6 +143,8 @@ data class Media(
     val type: String,
     /** The video has a separate audio file (same address with part=audio) that plays together with it. */
     val audio: Boolean = false,
+    /** The plugin has captions for it (same address with part=captions) – shown when CC is on on this TV. */
+    val captions: Boolean = false,
     val chat: Boolean,
     val player: PlayerSpec?,
 ) {
@@ -276,6 +278,10 @@ class Prefs(context: Context) {
     var audioLang: String
         get() = sp.getString("audioLang", "") ?: ""
         set(v) = sp.edit().putString("audioLang", v).apply()
+    /** CC: the captions a plugin gives (e.g. YouTube) – on or off for everything, this TV only. */
+    var cc: Boolean
+        get() = sp.getBoolean("cc", false)
+        set(v) = sp.edit().putBoolean("cc", v).apply()
 
     /** Live streams: show the chat, and the chosen quality (height in pixels, 0 = automatic). */
     var chatOn: Boolean
