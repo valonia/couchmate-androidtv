@@ -49,6 +49,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
@@ -338,6 +339,14 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
         Modifier
             .fillMaxSize()
             .background(Color.Black)
+            // Back in the queue closes it at once. Otherwise Compose uses the first Back to take the focus off the
+            // list (the panel stays, nothing is marked) and only the second one closes it.
+            .onPreviewKeyEvent { ev ->
+                val back = ev.key == Key.Back || ev.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_BACK
+                if (!back || !queueOpen || settingsPanel || panelOpen) return@onPreviewKeyEvent false
+                if (ev.type == KeyEventType.KeyUp) queueOpen = false
+                true
+            }
             .onKeyEvent { ev ->
                 if (anyPanel) return@onKeyEvent false // the panels handle themselves
                 if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false
