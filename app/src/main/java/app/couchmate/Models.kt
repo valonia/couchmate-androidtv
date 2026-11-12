@@ -270,6 +270,9 @@ class Prefs(context: Context) {
     var name: String
         get() = sp.getString("name", "") ?: ""
         set(v) = sp.edit().putString("name", v).apply()
+    /** A fixed id for this TV (made once) – the server tells TVs apart by it, e.g. two with the same name. */
+    val deviceId: String
+        get() = sp.getString("deviceId", null) ?: java.util.UUID.randomUUID().toString().also { sp.edit().putString("deviceId", it).apply() }
 
     /** Chosen subtitle language ("off" = off, "" = the file's default) and audio language – this TV only. */
     var subLang: String

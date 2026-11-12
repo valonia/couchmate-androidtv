@@ -80,7 +80,7 @@ fun App(prefs: Prefs) {
 @Composable
 fun Room(prefs: Prefs, seenMedia: String?, onSeen: (String?) -> Unit, onReconnect: () -> Unit) {
     val api = remember { Api(prefs.serverUrl, prefs.pin) }
-    val sync = remember { SyncClient(api, prefs.serverUrl, prefs.pin, prefs.name, Build.MODEL ?: "Android TV") }
+    val sync = remember { SyncClient(api, prefs.serverUrl, prefs.pin, prefs.name, Build.MODEL ?: "Android TV", prefs.deviceId).apply { onRenamed = { prefs.name = it } } }
 
     // Translations of the app's own texts are fetched in the background while the app runs.
     LaunchedEffect(api) { I18n.pump(api) }

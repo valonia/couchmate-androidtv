@@ -26,9 +26,16 @@ class SyncClient(
     private val api: Api,
     private val base: String,
     private val pin: String,
-    private val name: String,
+    name: String,
     private val device: String,
+    private val deviceId: String = "",
 ) {
+    /** The name this TV goes by – the admin can change it from the admin panel ("name" from the server). */
+    var name: String = name
+        private set
+    /** Called with the new name when the admin renames this TV – the app saves it in its settings. */
+    var onRenamed: (String) -> Unit = {}
+
     private val http = OkHttpClient.Builder()
         .pingInterval(20, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
@@ -89,7 +96,7 @@ class SyncClient(
                 connected.value = true
                 error.value = null
                 synchronized(samples) { samples.clear() }
-                webSocket.send(JSONObject().put("type", "hello").put("name", name).put("device", device).put("lang", I18n.lang ?: "en").toString())
+                webSocket.send(JSONObject().put("type", "hello").put("name", name).put("device", device).put("deviceId", deviceId).put("lang", I18n.lang ?: "en").toString())
                 if (watching) webSocket.send(JSONObject().put("type", "watching").put("value", true).toString())
                 if (chatOn) webSocket.send(JSONObject().put("type", "chat_sub").put("on", true).toString())
                 pingJob?.cancel()
@@ -192,6 +199,7 @@ class SyncClient(
             }
             "history_changed" -> historyVersion.value++
             "notice" -> o.optStringOrNull("text")?.let { notice.value = System.currentTimeMillis() to it }
+            "name" -> o.optStringOrNull("name")?.takeIf { it.isNotBlank() && it != name }?.let { name = it; onRenamed(it) }
             "error" -> o.optStringOrNull("text")?.let { notice.value = System.currentTimeMillis() to it }
         }
     }
