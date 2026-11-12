@@ -57,6 +57,11 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
     private var correctStartAt = 0L
     private var correctStartDrift = 0.0
     private var lastFineSeekAt = 0L
+    /** Standing still until then (ms) – how a player that cannot change speed lets the others catch up. */
+    private var holdUntil = 0L
+    private var lastHoldAt = 0L
+    /** How far past the target the last seek aimed on purpose (s) – left out when the lead is learned. */
+    private var overshoot = 0.0
     private var rate = 1f
     private var errorAt = 0L
     private var lastError = ""
@@ -100,6 +105,7 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
             livePaused = false
             leadCheck = false
             rateWorks = null
+            holdUntil = 0L
             setRate(1f, force = true)
             hls = media.type == "hls"
             audioUrl = audioFor(media, url)
@@ -217,6 +223,12 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
         }
 
         val target = st.position + (serverNow - st.refTime) / 1000.0
+        if (now < holdUntil) {
+            // Ahead of the others: standing still a moment (see below).
+            player.playWhenReady = false
+            status = ""
+            return
+        }
         player.playWhenReady = true
         if (player.playbackState == Player.STATE_BUFFERING) {
             status = tr("Buffering…")
@@ -228,7 +240,7 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
         drift = d
         if (leadCheck) {
             // Learn how long a seek takes so the next one lands right away.
-            seekLead = (seekLead - d * 0.7).coerceIn(0.3, 6.0)
+            seekLead = (seekLead - (d - overshoot) * 0.7).coerceIn(0.3, 6.0)
             leadCheck = false
         }
         val dur = durationSec()
@@ -236,22 +248,33 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
             status = tr("Ended")
             return
         }
-        // Does changing the speed work? With e.g. AC3/Dolby passed through undecoded the speed cannot change –
-        // then we correct with small exact jumps instead.
+        // Does changing the speed work? Not when the sound goes to the TV or amplifier undecoded (DTS, Dolby) –
+        // known straight away from the audio format, otherwise found out by trying for a few seconds.
+        if (rateWorks == null && passthroughAudio()) rateWorks = false
         if (correcting && rateWorks == null && now - correctStartAt > 5000) {
             rateWorks = abs(d) < abs(correctStartDrift) - 0.1
         }
-        val fineSeek = rateWorks == false && abs(d) > 0.25 && now - lastFineSeekAt > 8000
+        // Without speed changes: ahead → stand still for exactly that long (no new buffering); behind → one jump
+        // a little too far, and standing still takes off the rest. A jump empties the buffer, so as few as possible.
+        val fixed = rateWorks == false
+        val behindJump = fixed && d < -0.4 && now - lastFineSeekAt > 4000
         when {
-            abs(d) > 2.0 || fineSeek -> {
+            abs(d) > 2.0 || behindJump -> {
                 setRate(1f)
                 correcting = false
-                if (fineSeek) lastFineSeekAt = now
-                player.seekTo(ms(target + seekLead))
+                if (behindJump) lastFineSeekAt = now
+                overshoot = if (fixed) 0.4 else 0.0
+                player.seekTo(ms(target + seekLead + overshoot))
                 lastSeekAt = now
                 cooldownUntil = now + 2500
                 leadCheck = true
                 status = tr("Syncing…")
+            }
+            fixed && d > 0.12 && now - lastHoldAt > 1500 -> {
+                holdUntil = now + (d * 1000).toLong()
+                lastHoldAt = now
+                player.playWhenReady = false
+                status = ""
             }
             rateWorks != false && (abs(d) > 0.3 || (correcting && abs(d) > 0.06)) -> {
                 if (!correcting) {
@@ -340,6 +363,15 @@ class PlaybackSync(private val player: ExoPlayer, private val sync: SyncClient) 
             val source = MergingMediaSource(video, ProgressiveMediaSource.Factory(http).createMediaSource(MediaItem.fromUri(audio)))
             if (append) player.addMediaSource(source) else player.setMediaSource(source)
         }
+    }
+
+    /** The sound goes out undecoded (to the TV or an amplifier) – then the speed cannot be changed. */
+    private fun passthroughAudio(): Boolean {
+        val mime = player.audioFormat?.sampleMimeType ?: return false
+        return mime in setOf(
+            MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_E_AC3, MimeTypes.AUDIO_E_AC3_JOC, MimeTypes.AUDIO_AC4,
+            MimeTypes.AUDIO_DTS, MimeTypes.AUDIO_DTS_HD, MimeTypes.AUDIO_DTS_EXPRESS, MimeTypes.AUDIO_TRUEHD,
+        )
     }
 
     private fun setRate(r: Float, force: Boolean = false) {
