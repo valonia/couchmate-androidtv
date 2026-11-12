@@ -489,6 +489,7 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
                 epg = epg,
                 currentKey = media?.key,
                 api = api,
+                sync = sync,
                 onPick = { loadChannel(it); panelOpen = false },
             )
         }
@@ -846,8 +847,11 @@ private fun VodOverlay(st: RoomState, media: Media, members: List<Member>, conne
 
 /** A channel list that slides in from the left on top of the video. */
 @Composable
-private fun ChannelPanel(title: String, channels: List<Item>, epg: Map<String, List<Program>>, currentKey: String?, api: Api, onPick: (Item) -> Unit) {
+private fun ChannelPanel(title: String, channels: List<Item>, epg: Map<String, List<Program>>, currentKey: String?, api: Api, sync: SyncClient, onPick: (Item) -> Unit) {
     val nowS = rememberNowSec()
+    // Hold OK on a channel: add it to (or remove it from) the favourites, as everywhere else.
+    val favorites by sync.favorites.collectAsState()
+    val favKeys = remember(favorites) { favorites.map { it.key }.toSet() }
     val listState = rememberLazyListState()
     val currentFocus = remember { FocusRequester() }
     val startIdx = channels.indexOfFirst { it.key == currentKey }.coerceAtLeast(0)
@@ -864,8 +868,10 @@ private fun ChannelPanel(title: String, channels: List<Item>, epg: Map<String, L
                 .padding(start = 28.dp, end = 20.dp, top = 28.dp, bottom = 20.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 14.dp, bottom = 12.dp)) {
-                Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.weight(1f))
+                Column(Modifier.weight(1f)) {
+                    Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(tr("Hold OK: favorite"), fontSize = 12.sp, color = Palette.Faint)
+                }
                 Clock(20)
             }
             if (channels.isEmpty()) {
@@ -881,6 +887,8 @@ private fun ChannelPanel(title: String, channels: List<Item>, epg: Map<String, L
                             playing = item.key == currentKey,
                             iconUrl = api.abs(item.image),
                             onClick = { onPick(item) },
+                            favorite = item.key in favKeys,
+                            onLongClick = if (item.favorite) ({ sync.toggleFavorite(item) }) else null,
                             modifier = if (idx == startIdx) Modifier.focusRequester(currentFocus) else Modifier,
                         )
                     }
