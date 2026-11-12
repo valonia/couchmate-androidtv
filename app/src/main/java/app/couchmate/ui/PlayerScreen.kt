@@ -358,10 +358,15 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
             .background(Color.Black)
             // Back in the queue closes it at once. Otherwise Compose uses the first Back to take the focus off the
             // list (the panel stays, nothing is marked) and only the second one closes it.
+            // The same for every panel (the channel list, the settings, the queue): Back closes the one on top.
             .onPreviewKeyEvent { ev ->
                 val back = ev.key == Key.Back || ev.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_BACK
-                if (!back || !queueOpen || settingsPanel || panelOpen) return@onPreviewKeyEvent false
-                if (ev.type == KeyEventType.KeyUp) queueOpen = false
+                if (!back || !(settingsPanel || panelOpen || queueOpen)) return@onPreviewKeyEvent false
+                if (ev.type == KeyEventType.KeyUp) when {
+                    settingsPanel -> settingsPanel = false
+                    panelOpen -> panelOpen = false
+                    queueOpen -> queueOpen = false
+                }
                 true
             }
             .onKeyEvent { ev ->
