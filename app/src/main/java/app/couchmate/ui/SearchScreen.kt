@@ -59,6 +59,7 @@ import app.couchmate.PluginResult
 import app.couchmate.SyncClient
 import app.couchmate.tr
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 /** Searches every plugin at once. Results appear while you type. */
 @Composable
@@ -75,16 +76,19 @@ fun SearchScreen(sync: SyncClient, api: Api) {
 
     LaunchedEffect(Unit) { delay(150); runCatching { fieldFocus.requestFocus() } }
 
-    // Search while typing (after a short pause).
+    // Search while typing (after a short pause – every search asks every plugin, YouTube's take a few seconds).
     LaunchedEffect(query) {
         val q = query.trim()
         if (q.length < 2) { result = null; error = null; return@LaunchedEffect }
-        delay(350)
+        delay(700)
         loading = true
         try {
             result = api.search(q)
             error = null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e // typed on: a newer search replaces this one – not an error
         } catch (e: Exception) {
+            if (!isActive) return@LaunchedEffect // the request broke off because a newer search started
             error = e.message
         }
         loading = false
