@@ -110,7 +110,7 @@ fun HistoryScreen(sync: SyncClient, api: Api) {
         val entry = rememberFocusEntryByKey(listState, "history")
         when {
             error != null && list == null -> Text(tr("Error: {message}", "message" to error), color = Color(0xFFFF8A80), modifier = Modifier.padding(12.dp))
-            list == null -> Text(tr("Loading…"), color = Palette.Dim, modifier = Modifier.padding(12.dp))
+            list == null -> SkeletonRows(height = 92.dp)
             list.isEmpty() -> Text(
                 tr("Nothing here yet. Everything you start is saved here, and movies and episodes can be resumed where you left off."),
                 color = Palette.Dim, fontSize = 16.sp, modifier = Modifier.padding(12.dp),

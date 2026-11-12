@@ -875,7 +875,7 @@ private fun ChannelPanel(title: String, channels: List<Item>, epg: Map<String, L
                 Clock(20)
             }
             if (channels.isEmpty()) {
-                Text(tr("Loading channels…"), color = Palette.Dim, modifier = Modifier.padding(14.dp))
+                SkeletonRows(count = 9, height = 64.dp)
             } else {
                 LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     val keys = uniqueKeys(channels)

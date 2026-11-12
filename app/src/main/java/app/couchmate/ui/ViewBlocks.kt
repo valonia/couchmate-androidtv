@@ -199,7 +199,20 @@ internal fun ViewContext.ListBlock(node: JSONObject, modifier: Modifier, grid: B
 
     when {
         spec != null && loaded?.value == null && loaded?.error != null -> { Message(tr("Error: {message}", "message" to loaded.error), error = true); return }
-        spec != null && loaded?.value == null -> { Box(m) { Message(node.optString("loading").ifEmpty { tr("Loading…") }) }; return }
+        // On its way: grey shapes like what is coming (rows, cards or posters).
+        spec != null && loaded?.value == null -> {
+            Box(m) {
+                when {
+                    grid -> SkeletonGrid(aspect = node.optDouble("aspect", 2.0 / 3.0).toFloat())
+                    node.optString("direction") == "horizontal" -> SkeletonCards(
+                        width = dpOf(node.opt("itemWidth")) ?: if (style == "poster") 140.dp else 240.dp,
+                        aspect = if (style == "poster") node.optDouble("aspect", 2.0 / 3.0).toFloat() else 16f / 9f,
+                    )
+                    else -> SkeletonRows(height = dpOf(node.opt("itemHeight")) ?: 64.dp)
+                }
+            }
+            return
+        }
         shown.isEmpty() -> { Box(m) { node.optString("empty").takeIf { it.isNotEmpty() }?.let { Message(string(it)) } }; return }
     }
 
@@ -428,7 +441,7 @@ fun ViewScreen(sync: SyncClient, api: Api, ref: ViewRef, open: (ViewRef) -> Unit
     val r = root
     when {
         r == null && error != null -> Message(tr("Error: {message}", "message" to error), error = true)
-        r == null -> Message(tr("Loading…"))
+        r == null -> SkeletonPage()
         else -> {
             val viewRoot = JSONObject((r.optJSONObject("view") ?: JSONObject()).toString()).apply { for ((k, v) in ref.params) if (!has(k)) put(k, v) }
             val ctx = ViewContext(ref.plugin, api, sync, state, mapOf("view" to viewRoot), env, open, back)

@@ -166,6 +166,12 @@ fun SearchScreen(sync: SyncClient, api: Api) {
         // Down from the search field or in from the menu: back to the row you were on, otherwise the top one.
         val listState = rememberLazyListState()
         val entry = rememberFocusEntryByKey(listState, "search")
+        // The first search on its way: rows of grey cards where the results will be.
+        if (loading && sections.isEmpty()) {
+            Column(Modifier.padding(start = 28.dp, top = 8.dp), verticalArrangement = Arrangement.spacedBy(26.dp)) {
+                repeat(2) { SkeletonCards(width = 260.dp) }
+            }
+        }
         if (sections.isNotEmpty()) {
             val several = r.orEmpty().size > 1
             LazyColumn(

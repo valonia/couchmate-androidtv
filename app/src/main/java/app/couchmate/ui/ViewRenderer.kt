@@ -467,7 +467,7 @@ fun ViewContext.Block(node: JSONObject, modifier: Modifier = Modifier) {
         val d = rememberData(spec)
         when {
             d.value == null && d.error != null -> Message(tr("Error: {message}", "message" to d.error), error = true)
-            d.value == null -> Message(node.optString("loading").ifEmpty { tr("Loading…") })
+            d.value == null -> SkeletonLines(modifier)
             else -> with(d.value).Draw(type, node, modifier)
         }
         return
