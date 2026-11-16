@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -238,7 +239,16 @@ fun SettingsPanel(sections: List<Pair<String, List<TrackOption>>>, onClose: () -
     val firstFocus = remember { FocusRequester() }
     // Focus on the chosen option in the first box (or its first row).
     val focusIdx = sections.firstOrNull()?.second?.indexOfFirst { it.selected }?.coerceAtLeast(0) ?: 0
-    LaunchedEffect(Unit) { delay(80); runCatching { firstFocus.requestFocus() } }
+    val listState = rememberLazyListState()
+    LaunchedEffect(Unit) {
+        // The chosen row can be far down (e.g. Swedish among 30 languages) – it must be on screen
+        // before it can take focus, so scroll there first (row 0 is the header).
+        if (focusIdx > 0) listState.scrollToItem((focusIdx + 1 - 3).coerceAtLeast(0))
+        repeat(10) {
+            delay(80)
+            if (runCatching { firstFocus.requestFocus() }.isSuccess) return@LaunchedEffect
+        }
+    }
 
     Row(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f).fillMaxHeight().background(Color(0x33000000)))
@@ -249,7 +259,7 @@ fun SettingsPanel(sections: List<Pair<String, List<TrackOption>>>, onClose: () -
         ) {
             Text(tr("Settings"), fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 14.dp))
             Text(tr("Only affects this TV"), fontSize = 14.sp, color = Palette.Faint, modifier = Modifier.padding(start = 14.dp, top = 2.dp, bottom = 14.dp))
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 sections.forEachIndexed { si, (title, options) ->
                     if (si > 0) item { Spacer(Modifier.height(18.dp)) }
                     item { Header(title) }
