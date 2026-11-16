@@ -52,6 +52,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-exoplayer-hls:$media3")
     implementation("androidx.media3:media3-ui:$media3")
+    // Decodes audio formats the device cannot (E-AC3, DTS, TrueHD …) – used only when the device has no decoder of its own.
+    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.6.1+2")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
