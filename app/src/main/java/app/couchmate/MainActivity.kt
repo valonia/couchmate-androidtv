@@ -4,7 +4,10 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -17,21 +20,26 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.SurfaceDefaults
+import androidx.tv.material3.Text
 import androidx.tv.material3.darkColorScheme
 import app.couchmate.ui.BrowseScreen
 import app.couchmate.ui.LocalFocusMemory
 import app.couchmate.ui.PlayerScreen
 import app.couchmate.ui.SetupScreen
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -124,6 +132,16 @@ fun Room(prefs: Prefs, seenMedia: String?, onSeen: (String?) -> Unit, onReconnec
         sync.onPickedPlaying = { inPlayer = true }
         onDispose { sync.onPickedPlaying = null }
     }
+    // You started something from the menus: a short "Press OK again for fullscreen" (not for the state we get
+    // when connecting).
+    var fullscreenHint by remember { mutableStateOf(false) }
+    var firstVersion by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(state?.version) {
+        val st = state ?: return@LaunchedEffect
+        if (firstVersion == null) { firstVersion = st.version; return@LaunchedEffect }
+        if (st.media != null && st.action == "load" && st.changedBy == sync.name && !inPlayer) fullscreenHint = true
+    }
+    LaunchedEffect(fullscreenHint, mediaKey) { if (fullscreenHint) { delay(6000); fullscreenHint = false } }
 
     // The menu's state (chosen entry, group, detail page, row and scroll) is kept while the player shows,
     // so you come back to where you were.
@@ -139,6 +157,13 @@ fun Room(prefs: Prefs, seenMedia: String?, onSeen: (String?) -> Unit, onReconnec
                     BrowseScreen(sync, api, prefs, overVideo = playing, onOpenPlayer = { inPlayer = true }, onReconnect = onReconnect)
                 }
             }
+        }
+        if (fullscreenHint && playing && !inPlayer) {
+            Text(
+                tr("Press OK again for fullscreen"), fontSize = 17.sp, color = Color.White,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 40.dp)
+                    .background(Color(0xE61A1F29), RoundedCornerShape(50)).padding(horizontal = 24.dp, vertical = 12.dp),
+            )
         }
     }
 }
