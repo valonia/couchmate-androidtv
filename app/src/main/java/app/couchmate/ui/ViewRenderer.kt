@@ -519,7 +519,10 @@ internal fun ViewContext.Draw(type: String, node: JSONObject, modifier: Modifier
         "topbar" -> Box(modifier) { env.topbar?.invoke() }
         "button" -> {
             val label = string(node.opt("text"))
-            Pill(label, selected = truthy(value(node.opt("selected"))), onClick = { run(node.opt("onClick")) }, modifier = base(node, modifier))
+            // "autofocus": true – the button takes focus when the view opens (e.g. Play on a film's page).
+            val focus = remember { FocusRequester() }
+            if (node.optBoolean("autofocus")) LaunchedEffect(Unit) { delay(150); runCatching { focus.requestFocus() } }
+            Pill(label, selected = truthy(value(node.opt("selected"))), onClick = { run(node.opt("onClick")) }, modifier = base(node, modifier).focusRequester(focus))
         }
         "list" -> ListBlock(node, modifier, grid = false)
         "grid" -> ListBlock(node, modifier, grid = true)
