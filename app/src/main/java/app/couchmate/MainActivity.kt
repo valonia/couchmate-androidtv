@@ -4,6 +4,7 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -105,34 +106,38 @@ fun Room(prefs: Prefs, seenMedia: String?, onSeen: (String?) -> Unit, onReconnec
 
     val state by sync.state.collectAsState()
     val mediaKey = state?.media?.key
+    // Fullscreen video, or the menus with the video playing behind them.
     var inPlayer by remember { mutableStateOf(false) }
 
-    // When someone starts something new, everyone jumps into the player.
+    // Joining while something plays: straight into it. Otherwise nobody is pulled out of the menus – what
+    // someone starts plays behind them, and picking it again (the second click) or "Now playing" opens the fullscreen.
     val hasState = state != null
+    var joined by remember { mutableStateOf(false) }
     LaunchedEffect(mediaKey, hasState) {
         if (!hasState) return@LaunchedEffect // wait for the room's state from the server
         if (mediaKey == null) inPlayer = false
-        else if (mediaKey != seenMedia) inPlayer = true // something new started (or we just joined)
+        else if (!joined && mediaKey != seenMedia) inPlayer = true // we just joined and something (new) plays
+        joined = true
         onSeen(mediaKey)
     }
-    // Starting something that already plays (e.g. "Watch now" on the channel that is on) – go to the player anyway.
-    var firstVersion by remember { mutableStateOf<Int?>(null) }
-    LaunchedEffect(state?.version) {
-        val st = state ?: return@LaunchedEffect
-        if (firstVersion == null) { firstVersion = st.version; return@LaunchedEffect } // the first state after connecting does not count
-        if (st.media != null && st.action == "load" && st.changedBy == prefs.name) inPlayer = true
+    DisposableEffect(sync) {
+        sync.onPickedPlaying = { inPlayer = true }
+        onDispose { sync.onPickedPlaying = null }
     }
 
     // The menu's state (chosen entry, group, detail page, row and scroll) is kept while the player shows,
     // so you come back to where you were.
     val saved = rememberSaveableStateHolder()
-    if (inPlayer && state?.media != null) {
-        PlayerScreen(sync, api, onExit = { inPlayer = false })
-    } else {
-        saved.SaveableStateProvider("browse") {
-            val focusMemory = rememberSaveable { mutableStateOf<String?>(null) }
-            CompositionLocalProvider(LocalFocusMemory provides focusMemory) {
-                BrowseScreen(sync, api, prefs, onOpenPlayer = { inPlayer = true }, onReconnect = onReconnect)
+    val playing = state?.media != null
+    Box(Modifier.fillMaxSize()) {
+        // One player for as long as something plays – it keeps going (sound, sync, the next song) behind the menus.
+        if (playing) PlayerScreen(sync, api, fullscreen = inPlayer, onExit = { inPlayer = false })
+        if (!inPlayer || !playing) {
+            saved.SaveableStateProvider("browse") {
+                val focusMemory = rememberSaveable { mutableStateOf<String?>(null) }
+                CompositionLocalProvider(LocalFocusMemory provides focusMemory) {
+                    BrowseScreen(sync, api, prefs, overVideo = playing, onOpenPlayer = { inPlayer = true }, onReconnect = onReconnect)
+                }
             }
         }
     }

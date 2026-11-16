@@ -88,7 +88,7 @@ fun HistoryScreen(sync: SyncClient, api: Api) {
 
     fun play(e: HistoryEntry, fromStart: Boolean = false) {
         val pos = if (!fromStart && e.resumable) e.position else 0.0
-        sync.load(e.toItem(), position = pos)
+        sync.load(e.toItem(), position = pos, exact = fromStart)
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {

@@ -43,7 +43,7 @@ import app.couchmate.tr
 import kotlinx.coroutines.delay
 
 @Composable
-fun BrowseScreen(sync: SyncClient, api: Api, prefs: app.couchmate.Prefs, onOpenPlayer: () -> Unit, onReconnect: () -> Unit) {
+fun BrowseScreen(sync: SyncClient, api: Api, prefs: app.couchmate.Prefs, overVideo: Boolean = false, onOpenPlayer: () -> Unit, onReconnect: () -> Unit) {
     val state by sync.state.collectAsState()
     val members by sync.members.collectAsState()
     val connected by sync.connected.collectAsState()
@@ -86,7 +86,8 @@ fun BrowseScreen(sync: SyncClient, api: Api, prefs: app.couchmate.Prefs, onOpenP
     }
 
     Box(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxSize().background(Palette.Bg)) {
+        // Over a playing video the content side is see-through (the video shows dimmed behind it); the menu is not.
+        Row(Modifier.fillMaxSize().background(if (overVideo) Palette.Bg.copy(alpha = 0.8f) else Palette.Bg)) {
             SideNav(
                 entries = menu.orEmpty(),
                 selectedKey = selected ?: "",

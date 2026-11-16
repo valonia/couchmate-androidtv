@@ -273,9 +273,17 @@ class SyncClient(
 
     // ------------------------------------------------------------ commands
 
-    /** Plays an item for everyone. [position] = where to start (seconds), e.g. when resuming. */
-    fun load(item: Item, position: Double = 0.0) {
+    /** Called when you pick what already plays (the second click) – the app shows it in fullscreen. */
+    var onPickedPlaying: (() -> Unit)? = null
+
+    /**
+     * Plays an item for everyone. [position] = where to start (seconds), e.g. when resuming.
+     * Picking what already plays does not start it again (unless [exact] – "start over", "resume at …"):
+     * it opens the fullscreen instead.
+     */
+    fun load(item: Item, position: Double = 0.0, exact: Boolean = false) {
         if (item.unavailable) return // greyed out: shown, never played
+        if (!exact && state.value?.media?.key == item.key) { onPickedPlaying?.invoke(); return }
         val meta = JSONObject().put("title", item.title).put("subtitle", item.subtitle).put("image", item.image)
             .put("kind", item.kind).put("live", item.live)
         send(JSONObject().put("type", "load").put("plugin", item.plugin).put("id", item.id).put("position", position).put("meta", meta))

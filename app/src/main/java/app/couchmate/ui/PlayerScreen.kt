@@ -104,7 +104,7 @@ import kotlinx.coroutines.launch
  */
 @OptIn(UnstableApi::class)
 @Composable
-fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
+fun PlayerScreen(sync: SyncClient, api: Api, fullscreen: Boolean = true, onExit: () -> Unit) {
     val context = LocalContext.current
     val player = remember {
         ExoPlayer.Builder(context, DefaultRenderersFactory(context).setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON))
@@ -193,7 +193,7 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
     val spec = media?.player ?: defaultSpec(media)
     val live = media?.live == true
     var showChat by remember { mutableStateOf(prefs.chatOn) }
-    val chatVisible = media?.chat == true && showChat
+    val chatVisible = fullscreen && media?.chat == true && showChat
     LaunchedEffect(chatVisible) { sync.setChat(chatVisible) }
     LaunchedEffect(media?.key) { applyStreamQuality(player, prefs, spec.settings.any { it.type == "quality" }) }
     fun toggleChat() { showChat = !showChat; prefs.chatOn = showChat }
@@ -294,11 +294,15 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
         if (queue?.items.isNullOrEmpty()) queueOpen = false
     }
     val rootFocus = remember { FocusRequester() }
-    LaunchedEffect(panelOpen, settingsPanel, queueOpen) {
-        if (!panelOpen && !settingsPanel && !queueOpen) { delay(50); runCatching { rootFocus.requestFocus() } }
+    LaunchedEffect(panelOpen, settingsPanel, queueOpen, fullscreen) {
+        if (fullscreen && !panelOpen && !settingsPanel && !queueOpen) { delay(50); runCatching { rootFocus.requestFocus() } }
+    }
+    // Behind the menus: no panels, and the overlay shows briefly when you come back.
+    LaunchedEffect(fullscreen) {
+        if (!fullscreen) { panelOpen = false; settingsPanel = false; queueOpen = false } else poke()
     }
 
-    BackHandler {
+    BackHandler(enabled = fullscreen) {
         when {
             settingsPanel -> settingsPanel = false
             panelOpen -> panelOpen = false
@@ -380,6 +384,8 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
                         when {
                             cur?.reminder != null -> if (firstPress) sync.reminderNow() // OK = switch channel now
                             cur?.upNext != null -> if (firstPress) sync.nextNow() // OK = play the next episode now
+                            // The first OK only shows the info (so you see what the keys do); OK again does it.
+                            !showOverlay -> if (firstPress) poke()
                             else -> perform(spec.keys["ok"] ?: "pause", firstPress)
                         }
                         true
@@ -401,7 +407,7 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
                 }
             }
             .focusRequester(rootFocus)
-            .focusable(),
+            .focusable(fullscreen),
     ) {
         AndroidView(
             factory = { ctx ->
@@ -421,9 +427,13 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
                     }
                 }
             },
+            // Behind the menus the subtitles would only be in the way.
+            update = { v -> v.subtitleView?.visibility = if (fullscreen) android.view.View.VISIBLE else android.view.View.GONE },
             modifier = Modifier.fillMaxSize().padding(end = chatWidth),
         )
 
+        // Behind the menus only the video shows – "next episode" and the rest wait for the fullscreen.
+        if (fullscreen) {
         val q = queue
         if (queueOpen && q != null) {
             QueuePanel(q, api, Modifier.align(Alignment.CenterEnd).width(chatWidth).fillMaxHeight()) { item ->
@@ -550,6 +560,7 @@ fun PlayerScreen(sync: SyncClient, api: Api, onExit: () -> Unit) {
                 modifier = Modifier.align(Alignment.BottomEnd).padding(48.dp))
         }
         NoticeToast(sync, Modifier.align(Alignment.TopCenter).padding(top = 24.dp))
+        }
     }
 }
 

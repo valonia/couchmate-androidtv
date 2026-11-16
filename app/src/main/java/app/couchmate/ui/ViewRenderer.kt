@@ -295,8 +295,10 @@ fun ViewContext.run(action: Any?) {
             }
             if (action.has("play")) toItem(value(action.opt("play")))?.let { item ->
                 val sub = action.optString("subtitle").takeIf { it.isNotEmpty() }?.let { string(it) }?.takeIf { it.isNotEmpty() }
-                val pos = action.opt("position")?.let { text(value(it)).toDoubleOrNull() } ?: 0.0
-                sync.load(if (item.subtitle == null && sub != null) item.copy(subtitle = sub) else item, pos)
+                val given = action.opt("position")?.let { text(value(it)).toDoubleOrNull() }
+                val pos = given ?: 0.0
+                // An explicit 0 ("start over") restarts even what already plays; anything else on it opens the fullscreen.
+                sync.load(if (item.subtitle == null && sub != null) item.copy(subtitle = sub) else item, pos, exact = given == 0.0)
             }
             if (action.has("open")) open(ViewRef(action.optString("plugin").ifEmpty { plugin }, string(action.opt("open")), params(action.optJSONObject("params"))))
             action.optJSONObject("set")?.let { set -> for (k in set.keys()) state[k] = value(set.opt(k)) }
