@@ -154,7 +154,16 @@ class SyncClient(
                     offsetMs = samples.minBy { it.first }.second
                 }
             }
-            "state" -> state.value = parseState(o.getJSONObject("state"))
+            "state" -> {
+                val st = parseState(o.getJSONObject("state"))
+                state.value = st
+                // What we started has arrived: open the fullscreen if it was picked again while it was starting.
+                val p = pending
+                if (p != null && st.media?.key == p.first) {
+                    pending = null
+                    if (p.second) android.os.Handler(android.os.Looper.getMainLooper()).post { onPickedPlaying?.invoke() }
+                }
+            }
             "chat" -> {
                 val msgs = o.optJSONArray("messages").mapObjects { m -> ChatMsg(m.optString("user"), m.optStringOrNull("color"), m.optString("text")) }
                 chat.value = (if (o.optBoolean("reset")) msgs else chat.value + msgs).takeLast(150)
@@ -200,7 +209,7 @@ class SyncClient(
             "history_changed" -> historyVersion.value++
             "notice" -> o.optStringOrNull("text")?.let { notice.value = System.currentTimeMillis() to it }
             "name" -> o.optStringOrNull("name")?.takeIf { it.isNotBlank() && it != name }?.let { name = it; onRenamed(it) }
-            "error" -> o.optStringOrNull("text")?.let { notice.value = System.currentTimeMillis() to it }
+            "error" -> { pending = null; o.optStringOrNull("text")?.let { notice.value = System.currentTimeMillis() to it } }
         }
     }
 
@@ -276,6 +285,9 @@ class SyncClient(
     /** Called when you pick what already plays (the second click) – the app shows it in fullscreen. */
     var onPickedPlaying: (() -> Unit)? = null
 
+    /** What we asked to play and the server has not started yet: (key, picked again, when). */
+    @Volatile private var pending: Triple<String, Boolean, Long>? = null
+
     /**
      * Plays an item for everyone. [position] = where to start (seconds), e.g. when resuming.
      * Picking what already plays does not start it again (unless [exact] – "start over", "resume at …"):
@@ -284,6 +296,13 @@ class SyncClient(
     fun load(item: Item, position: Double = 0.0, exact: Boolean = false) {
         if (item.unavailable) return // greyed out: shown, never played
         if (!exact && state.value?.media?.key == item.key) { onPickedPlaying?.invoke(); return }
+        // Still starting (the server asks the plugin for the stream first, which can take a few seconds):
+        // picking it again means "fullscreen when it starts", not "start it over".
+        val p = pending
+        if (!exact && p != null && p.first == item.key && System.currentTimeMillis() - p.third < 30_000) {
+            pending = Triple(p.first, true, p.third); return
+        }
+        pending = Triple(item.key, false, System.currentTimeMillis())
         val meta = JSONObject().put("title", item.title).put("subtitle", item.subtitle).put("image", item.image)
             .put("kind", item.kind).put("live", item.live)
         send(JSONObject().put("type", "load").put("plugin", item.plugin).put("id", item.id).put("position", position).put("meta", meta))
