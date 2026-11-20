@@ -6,7 +6,19 @@ The app is a front end: it plays video in sync with everyone else and has search
 settings and translation built in. Everything else – the menu, the screens, what is played and how the player
 reacts to the remote – comes from the plugins on the Couchmate server. The app draws what they describe.
 
-Kotlin, Compose for TV and ExoPlayer (Media3).
+Kotlin, Compose for TV and ExoPlayer (Media3), with an FFmpeg decoder for sound the TV cannot play itself
+(E-AC3, DTS, TrueHD).
+
+## Using it
+
+- **The video keeps playing behind the menus.** Press Back in the player and the menus show on top of the dimmed
+  video, with the sound still on. Pick something and it starts behind the menus ("Press OK again for fullscreen");
+  pick it again, or **Now playing**, for fullscreen.
+- **In the player** the first OK shows the info and buttons around the video; with them up, OK pauses and plays.
+  The plugin decides what the other keys do (channel list, seeking, queue, settings …). Back closes every panel
+  with one press.
+- **Favourites:** hold OK on a card, or on a channel in the player's channel list.
+- **Subtitles from plugins (CC)** can be switched on and off in the player's settings; the choice is kept per TV.
 
 ## Install
 
